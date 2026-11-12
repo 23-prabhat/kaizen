@@ -1,0 +1,71 @@
+plugins {
+    id 'com.android.application' version '9.2.1'
+    id 'org.jetbrains.kotlin.plugin.compose' version '2.2.10'
+}
+
+abstract class SyncKaizenArtwork extends DefaultTask {
+    @InputDirectory abstract DirectoryProperty getArtwork()
+    @OutputDirectory abstract DirectoryProperty getResources()
+    @Inject abstract FileSystemOperations getFiles()
+
+    @TaskAction
+    void sync() {
+        files.sync {
+            from(artwork) {
+                include 'desk-cat.png', 'desk-cat-coffee.png', 'desk-cat-focus.png', 'desk-cat-victory.png',
+                    'kaizen-mark.png', 'kaizen-icon.png', 'kaizen-foreground.png'
+                rename { name -> name.replace('-', '_') }
+                into 'drawable-nodpi'
+            }
+            into resources
+        }
+    }
+}
+
+def artworkTask = tasks.register('syncKaizenArtwork', SyncKaizenArtwork) {
+    artwork.set(rootProject.layout.projectDirectory.dir('../assets'))
+    resources.set(layout.buildDirectory.dir('generated/kaizen-res'))
+}
+
+android {
+    namespace 'com.daytabs.planner'
+    compileSdk 37
+
+    defaultConfig {
+        applicationId 'com.daytabs.planner'
+        minSdk 24
+        targetSdk 36
+        versionCode 2
+        versionName '0.2.0'
+    }
+
+    buildFeatures {
+        compose true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+        coreLibraryDesugaringEnabled true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+        }
+    }
+
+}
+
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    variant.sources.res.addGeneratedSourceDirectory(artworkTask, { it.resources })
+}
+
+dependencies {
+    implementation 'androidx.activity:activity-compose:1.11.0'
+    implementation 'androidx.compose.foundation:foundation:1.12.1'
+    implementation 'androidx.exifinterface:exifinterface:1.4.1'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+}

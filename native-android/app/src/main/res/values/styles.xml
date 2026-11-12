@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">Kaizen</string>
+    <color name="icon_background">#FFD947</color>
+    <string name="widget_name">Daily motivation</string>
+    <string name="widget_header">Kaizen · Daily motivation</string>
+    <string name="widget_description">Read today’s Kaizen motivation line.</string>
+    <style name="Theme.Kaizen" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#F5F1FF</item>
+        <item name="android:colorAccent">#584C62</item>
+    </style>
+</resources>
