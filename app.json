@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Kaizen",
+    "slug": "daytabs",
+    "scheme": "daytabs",
+    "version": "0.1.0",
+    "icon": "./assets/kaizen-icon.png",
+    "userInterfaceStyle": "automatic",
+    "plugins": [
+      "expo-router",
+      ["expo-notifications", { "color": "#FFD947", "enableRemoteNotifications": false }],
+      ["expo-image-picker", {
+        "photosPermission": "Choose a photo for your Kaizen dashboard avatar.",
+        "cameraPermission": false,
+        "microphonePermission": false
+      }],
+      ["expo-widgets", {
+        "enableAndroid": true,
+        "widgets": [{
+          "name": "DaytabsMotivation",
+          "displayName": "Daily motivation",
+          "description": "Read today’s Kaizen motivation line.",
+          "ios": {
+            "supportedFamilies": ["systemSmall", "systemMedium"],
+            "contentMarginsDisabled": true,
+            "initialLayout": "./src/widgets/motivation.ios.tsx"
+          },
+          "android": {
+            "minWidth": 180,
+            "minHeight": 110,
+            "targetCellWidth": 4,
+            "targetCellHeight": 2,
+            "resizeMode": "both",
+            "initialLayout": "./src/widgets/motivation.android.tsx"
+          }
+        }]
+      }],
+      "./plugins/with-motivation-widget-refresh.js"
+    ],
+    "ios": { "bundleIdentifier": "com.daytabs.planner", "supportsTablet": true },
+    "android": {
+      "package": "com.daytabs.planner",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/kaizen-foreground.png",
+        "backgroundColor": "#FFD947"
+      }
+    },
+    "web": { "bundler": "metro", "output": "single", "favicon": "./assets/kaizen-icon.png" }
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+.env
+.env.*
+!.env.example
+supabase/november-work.json
+supabase/import_november_work.sql
+android/
+ios/
