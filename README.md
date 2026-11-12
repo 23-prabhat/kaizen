@@ -2,6 +2,10 @@
 
 Kaizen is a personal planner for Android and iOS. It opens straight to the dashboard. To-dos, notes, goals, and history are saved on the device by default, so they work offline and survive closing the app. A different installation or browser profile starts with its own planner. Clearing app or browser storage removes local data.
 
+## Try Kaizen on Android
+
+Download `Kaizen-0.1.0.apk` from the [Kaizen 0.1.0 release](https://github.com/23-prabhat/kaizen/releases/tag/v0.1.0) on a device running Android 7.0 or later. Open the APK and follow Android’s install prompts. A first install opens an empty, offline planner without an account. Open the bell on the dashboard to enable reminders.
+
 ## Run locally
 
 ```sh
