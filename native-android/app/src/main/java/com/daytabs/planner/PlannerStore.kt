@@ -25,6 +25,7 @@ internal data class Entry(
     val completedAt: String? = null,
     val schedule: Schedule? = null,
     val deadline: Long? = null,
+    val deadlineStart: Long? = null,
     val progress: List<ProgressNote> = emptyList(),
 ) {
     val completed: Boolean get() = completedAt != null
@@ -130,10 +131,14 @@ internal class PlannerStore(private val context: Context) {
                 completedAt = if (done) "${day}T12:00:00.000Z" else null,
             )
         }
+        return addImportedTodos(reports)
+    }
+
+    fun addImportedTodos(todos: List<Pair<String, Entry>>): Int {
         var added = 0
         update { state ->
             val records = state.records.toMutableMap()
-            reports.groupBy({ it.first }, { it.second }).forEach { (key, incoming) ->
+            todos.groupBy({ it.first }, { it.second }).forEach { (key, incoming) ->
                 val entries = records[key].orEmpty()
                 val existingIds = entries.mapTo(mutableSetOf()) { it.id }
                 val new = incoming.filter { existingIds.add(it.id) }
@@ -205,6 +210,7 @@ private fun decodeRecords(value: String): Map<String, List<Entry>> {
                 completedAt = row.stringOrNull("completedAt"),
                 schedule = schedule,
                 deadline = row.optLong("deadline", 0).takeIf { it > 0 },
+                deadlineStart = row.optLong("deadlineStart", 0).takeIf { it > 0 },
                 progress = decodeProgress(row.optJSONArray("progress")),
             )
         }
@@ -229,6 +235,7 @@ private fun encodeRecords(records: Map<String, List<Entry>>): String = JSONObjec
                     .put("note", entry.note ?: JSONObject.NULL)
                     .put("completedAt", entry.completedAt ?: JSONObject.NULL).apply {
                         entry.deadline?.let { put("deadline", it) }
+                        entry.deadlineStart?.let { put("deadlineStart", it) }
                         if (entry.progress.isNotEmpty()) {
                             put("progress", JSONArray().apply {
                                 entry.progress.forEach { note ->

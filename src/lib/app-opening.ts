@@ -1,15 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useEffect, useState } from 'react';
 import { AppState, Platform } from 'react-native';
-import { useAuth } from './auth';
+import { localPlannerOwner } from './planner';
 
 export function useAppOpening() {
-  const owner = useAuth().account?.id;
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
-    if (!owner) return;
-    const key = `daytabs.opening:${owner}`;
+    const key = `daytabs.opening:${localPlannerOwner}`;
     let active = true;
     let previous = -1;
     let wasBackgrounded = false;
@@ -46,7 +44,7 @@ export function useAppOpening() {
       active = false;
       subscription.remove();
     };
-  }, [owner]);
+  }, []);
 
   return index;
 }

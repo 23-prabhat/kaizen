@@ -52,7 +52,7 @@ function EntryRow({ entry, subtitle, first, last, readOnly, busy, onToggle, onOp
 export function Checklist({ scope, readOnly = false, header }: {
   scope: Scope; readOnly?: boolean; header?: (done: number, total: number) => ReactNode;
 }) {
-  const { query, offline, save, remove, toggle } = useEntries(scope);
+  const { query, save, remove, toggle } = useEntries(scope);
   const today = useToday();
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [toggling, setToggling] = useState(false);
@@ -74,14 +74,14 @@ export function Checklist({ scope, readOnly = false, header }: {
     try {
       await toggle(entry);
     } catch {
-      setError({ scope, text: offline ? 'Reconnect to update this item.' : 'Could not update this item. Tap its checkbox to try again.' });
+      setError({ scope, text: 'Could not update this item. Tap its checkbox to try again.' });
     } finally {
       working.current = false;
       setToggling(false);
     }
   }
 
-  const empty = offline || query.isError ? null : query.isPending
+  const empty = query.isError ? null : query.isPending
     ? <View style={styles.empty}><Loading label={`Loading ${noun}s`} /></View>
     : <Panel style={styles.empty}><Copy secondary>{scope.kind === 'todo'
       ? readOnly ? 'No to-dos for this day' : 'No to-dos for today' : 'No goals yet'}</Copy></Panel>;
@@ -91,10 +91,9 @@ export function Checklist({ scope, readOnly = false, header }: {
       contentContainerStyle={styles.list}
       data={ordered}
       keyExtractor={entry => entry.id}
-      ListHeaderComponent={header || offline || query.isError || visibleError ? <View style={styles.listHeader}>
+      ListHeaderComponent={header || query.isError || visibleError ? <View style={styles.listHeader}>
         {header?.(completed.length, records.length)}
-        {offline ? <Message>{query.data ? 'You’re offline. Reconnect to make changes.' : 'You’re offline. Reconnect to load this list.'}</Message> : null}
-        {!offline && query.isError ? <View style={styles.feedback}>
+        {query.isError ? <View style={styles.feedback}>
           <Message>{query.data ? 'Could not refresh this list.' : `Could not load ${noun}s.`}</Message>
           <Action label="Retry" onPress={() => void query.refetch()} />
         </View> : null}
@@ -105,7 +104,7 @@ export function Checklist({ scope, readOnly = false, header }: {
         subtitle={item.schedule ? `${goalPhase(item.schedule, today)} · ${goalRange(item.schedule)}` : undefined}
         readOnly={readOnly} busy={toggling} onToggle={() => void changeCompletion(item)}
         onOpen={() => setEditor({ scope, entry: item, readOnly })} />}
-      onRefresh={offline ? undefined : () => void query.refetch()}
+      onRefresh={() => void query.refetch()}
       refreshing={query.isRefetching}
       keyboardShouldPersistTaps="handled"
     />

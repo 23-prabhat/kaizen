@@ -95,8 +95,8 @@ class MainActivity : ComponentActivity() {
                     today = LocalDate.now()
                 }
             }
-            LaunchedEffect(today, foreground) {
-                DaytabsMotivationProvider.refresh(applicationContext)
+            LaunchedEffect(today, foreground, state?.records) {
+                withContext(Dispatchers.IO) { DaytabsMotivationProvider.refresh(applicationContext) }
             }
             val appearance = state?.appearance ?: Appearance.LIGHT
             val dark = appearance == Appearance.DARK || appearance == Appearance.SYSTEM && isSystemInDarkTheme()
@@ -168,6 +168,7 @@ private fun Kaizen(
     var notifications by rememberSaveable { mutableStateOf(false) }
     var widget by rememberSaveable { mutableStateOf(false) }
     var settingsReset by rememberSaveable { mutableIntStateOf(0) }
+    var todoDayReset by rememberSaveable { mutableIntStateOf(0) }
     val tabState = rememberSaveableStateHolder()
     val context = androidx.compose.ui.platform.LocalContext.current
     var reminderError by remember { mutableStateOf(false) }
@@ -177,6 +178,7 @@ private fun Kaizen(
             notifications = false
             widget = false
             tab = reminderTab
+            if (tab == Tab.TODOS) todoDayReset++
             onReminderOpened()
         }
     }
@@ -204,9 +206,10 @@ private fun Kaizen(
                     when (tab) {
                         Tab.DASHBOARD -> Dashboard(state, today, { destination ->
                             if (destination == Tab.SETTINGS) settingsReset++
+                            if (destination == Tab.TODOS) todoDayReset++
                             tab = destination
                         }, { notifications = true }, { widget = true })
-                        Tab.TODOS, Tab.GOALS, Tab.HISTORY -> PlannerTab(tab, state, today, store) { editor = it }
+                        Tab.TODOS, Tab.GOALS, Tab.HISTORY -> PlannerTab(tab, state, today, store, todoDayReset) { editor = it }
                         Tab.SETTINGS -> Settings(state, store, settingsReset, foreground, reminderError)
                     }
                 }
@@ -226,7 +229,7 @@ private fun Kaizen(
         KaizenDialog("Add home screen widget", { widget = false }) {
             DialogTitle("Add home screen widget", "Close widget instructions", 26) { widget = false }
             Copy("Android", weight = FontWeight.Bold)
-            Copy("Touch and hold an empty spot on the home screen. Open Widgets, find Kaizen, and drag Daily motivation onto your screen.",
+            Copy("Touch and hold an empty spot on the home screen. Open Widgets, find Kaizen, and drag Today’s to-dos onto your screen. Scroll inside the widget to see your full list.",
                 Modifier.padding(bottom = 4.dp))
         }
     }

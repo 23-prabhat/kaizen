@@ -6,7 +6,7 @@ import { useCallback, useRef, useState, type ComponentRef } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { AvatarSettings } from '@/components/avatar-settings';
 import { Action, Copy, Heading, Icon, Message, Page, Panel, type IconName } from '@/components/ui';
-import { useAuth } from '@/lib/auth';
+import { localPlannerOwner } from '@/lib/planner';
 import { importWorkReports, maxReportBytes } from '@/lib/local-planner';
 import { useAppearance, type Appearance } from '@/lib/theme';
 
@@ -18,7 +18,6 @@ const options: { value: Appearance; label: string; icon: IconName }[] = [
 
 export default function Settings() {
   const { colors, appearance, setAppearance } = useAppearance();
-  const { account } = useAuth();
   const queryClient = useQueryClient();
   const { section } = useLocalSearchParams<{ section?: string }>();
   const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
@@ -65,7 +64,7 @@ export default function Settings() {
         }
       }
       setImportStatus(added ? `Imported ${added} to-do${added === 1 ? '' : 's'}.` : 'These to-dos are already in your planner.');
-      void queryClient.invalidateQueries({ queryKey: ['planner', account?.id] });
+      void queryClient.invalidateQueries({ queryKey: ['planner', localPlannerOwner] });
     }, 'Could not import this report. Try again.', true);
   }
 
@@ -88,12 +87,10 @@ export default function Settings() {
       </Panel>
       <Copy style={[styles.title, styles.sectionTitle]}>Planner data</Copy>
       <Panel style={styles.storage}>
-        {account?.storage === 'device' ? <>
-          <Copy style={styles.choiceLabel}>Saved on this device</Copy>
-          <Copy secondary style={styles.description}>Import a Kaizen report to add dated to-dos and notes to this planner.</Copy>
-          <Action label="Import report" icon="download" disabled={busy} onPress={() => void importReport()} />
-          {importStatus ? <View accessibilityLiveRegion="polite"><Copy>{importStatus}</Copy></View> : null}
-        </> : <Copy secondary>Saved to your private Supabase guest session.</Copy>}
+        <Copy style={styles.choiceLabel}>Saved on this device</Copy>
+        <Copy secondary style={styles.description}>Import a Kaizen report to add dated to-dos and notes to this planner.</Copy>
+        <Action label="Import report" icon="download" disabled={busy} onPress={() => void importReport()} />
+        {importStatus ? <View accessibilityLiveRegion="polite"><Copy>{importStatus}</Copy></View> : null}
       </Panel>
       {error ? <Message>{error}</Message> : null}
     </ScrollView>

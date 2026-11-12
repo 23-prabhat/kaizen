@@ -20,7 +20,9 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,14 +50,23 @@ internal fun ColumnScope.PlannerTab(
     state: PlannerState,
     today: LocalDate,
     store: PlannerStore,
+    todoDayReset: Int,
     onEdit: (EditRequest) -> Unit,
 ) {
     val history = tab == Tab.HISTORY
     val goals = tab == Tab.GOALS
     val yesterday = today.minusDays(1)
     var selected by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastTodoDayReset by rememberSaveable { mutableIntStateOf(todoDayReset) }
+    LaunchedEffect(todoDayReset) {
+        if (tab == Tab.TODOS && lastTodoDayReset != todoDayReset) {
+            selected = null
+            lastTodoDayReset = todoDayReset
+        }
+    }
     var calendarOpen by rememberSaveable { mutableStateOf(false) }
-    val day = if (history) parseDay(selected)?.coerceAtMost(yesterday) ?: yesterday else today
+    val savedDay = parseDay(selected)
+    val day = if (history) savedDay?.coerceAtMost(yesterday) ?: yesterday else savedDay?.coerceAtLeast(today) ?: today
     val recent = remember(state.records, today) {
         if (history) state.activity(today).filter { it.day < today && it.done + it.remaining > 0 }.asReversed()
         else emptyList()
@@ -70,7 +81,7 @@ internal fun ColumnScope.PlannerTab(
     var error by remember(key) { mutableStateOf("") }
 
     fun select(next: LocalDate) {
-        selected = if (next < yesterday) next.toString() else null
+        selected = next.takeUnless { it == if (history) yesterday else today }?.toString()
         calendarOpen = false
     }
 
@@ -94,7 +105,16 @@ internal fun ColumnScope.PlannerTab(
                             }
                         }
                     } else if (!goals) {
-                        DateStrip(day, "${entries.count { it.completed }} of ${entries.size} done")
+                        DateStrip(day, onPick = { calendarOpen = true },
+                            onPrevious = { if (day > today) select(day.minusDays(1)) },
+                            onNext = { select(day.plusDays(1)) }, previousEnabled = day > today, nextEnabled = day < lastCalendarDay)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            RecentDay(today, day == today, "Today") { select(today) }
+                            RecentDay(today.plusDays(1), day == today.plusDays(1), "Tomorrow") { select(today.plusDays(1)) }
+                            Copy("${entries.count { it.completed }} of ${entries.size} done",
+                                Modifier.weight(1f), size = 13, align = TextAlign.End, color = colors.secondary)
+                        }
                     }
                     Message(error, error = true)
                 }
@@ -105,7 +125,8 @@ internal fun ColumnScope.PlannerTab(
                 val text = when {
                     goals -> "No goals yet"
                     history -> "No to-dos for this day"
-                    else -> "No to-dos for today"
+                    day == today -> "No to-dos for today"
+                    else -> "No to-dos planned for this day"
                 }
                 Panel(Modifier.fillMaxWidth().heightIn(min = 58.dp), radius = 9.dp) {
                     Box(Modifier.fillMaxWidth().heightIn(min = 54.dp).padding(horizontal = 12.dp, vertical = 10.dp),
@@ -144,13 +165,14 @@ internal fun ColumnScope.PlannerTab(
             onEdit(EditRequest(key, day))
         }
     }
-    if (calendarOpen && history) {
+    if (calendarOpen && !goals) {
         KaizenDialog("Choose a day", { calendarOpen = false }) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Copy("Choose a day", Modifier.weight(1f), size = 21, weight = FontWeight.ExtraBold)
                 IconButton("x", "Close calendar") { calendarOpen = false }
             }
-            CalendarGrid(day, lastDay = yesterday, onSelect = ::select)
+            CalendarGrid(day, firstDay = if (history) firstCalendarDay else today,
+                lastDay = if (history) yesterday else lastCalendarDay, onSelect = ::select)
         }
     }
 }
@@ -162,11 +184,12 @@ private fun DateStrip(
     onPick: (() -> Unit)? = null,
     onPrevious: (() -> Unit)? = null,
     onNext: (() -> Unit)? = null,
+    previousEnabled: Boolean = true,
     nextEnabled: Boolean = true,
 ) {
     Panel(Modifier.fillMaxWidth(), background = colors.date) {
         Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (onPrevious != null) IconButton("chevron-left", "Previous day", onClick = onPrevious)
+            if (onPrevious != null) IconButton("chevron-left", "Previous day", enabled = previousEnabled, onClick = onPrevious)
             val label = dayLabel(day)
             if (onPick != null) {
                 Row(
@@ -189,17 +212,17 @@ private fun DateStrip(
 }
 
 @Composable
-private fun RecentDay(day: LocalDate, active: Boolean, onClick: () -> Unit) {
+private fun RecentDay(day: LocalDate, active: Boolean, label: String = dateLabel(day), onClick: () -> Unit) {
     val shape = RoundedCornerShape(6.dp)
     Box(
         Modifier.widthIn(min = 48.dp).heightIn(min = 44.dp).clip(shape)
             .background(if (active) actionYellow else colors.surface)
             .border(1.5.dp, if (active) actionInk else colors.ink, shape)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = "Show ${dayLabel(day)}"; selected = active }
+            .semantics { contentDescription = if (label == dateLabel(day)) "Show ${dayLabel(day)}" else label; selected = active }
             .padding(horizontal = 8.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
-    ) { Copy(dateLabel(day), size = 13, lineHeight = 18, weight = FontWeight.Bold, color = if (active) actionInk else colors.ink) }
+    ) { Copy(label, size = 13, lineHeight = 18, weight = FontWeight.Bold, color = if (active) actionInk else colors.ink) }
 }
 
 @Composable

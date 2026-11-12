@@ -111,6 +111,11 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
         val cleanNote = if (isGoal) entry?.note else note.trim().ifEmpty { null }
         val schedule = if (isGoal && !deleting) Schedule(start, requireNotNull(finish)) else null
         val progressEdit = if (isGoal && progressOpen) progressText.trim() else null
+        val deadlineStart = when {
+            dueAt == null -> null
+            dueAt == entry?.deadline -> entry.deadlineStart
+            else -> maxOf(now, request.day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+        }
 
         keyboard?.hide()
         focus.clearFocus()
@@ -132,7 +137,7 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                                 }
                                 return current.copy(
                                     title = cleanTitle, note = cleanNote, schedule = schedule,
-                                    deadline = dueAt, progress = progress,
+                                    deadline = dueAt, deadlineStart = deadlineStart, progress = progress,
                                 )
                             }
                             if (entry == null) {
@@ -223,7 +228,7 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                             }
                         } else {
                             Field("Note (optional)", note, { note = it }, 4000, multiline = true, enabled = !busy)
-                            TodoDeadline(deadline, relativeHours, !busy, onChange = { at, hours ->
+                            TodoDeadline(request.day, deadline, relativeHours, !busy, onChange = { at, hours ->
                                 deadline = at
                                 relativeHours = hours
                                 error = ""
@@ -397,6 +402,7 @@ private fun GoalProgress(
 
 @Composable
 private fun TodoDeadline(
+    plannedDay: LocalDate,
     deadline: Long?,
     relativeHours: Int?,
     enabled: Boolean,
@@ -404,6 +410,7 @@ private fun TodoDeadline(
 ) {
     val context = LocalContext.current
     val dark = colors == darkPalette
+    val isToday = plannedDay == LocalDate.now()
     val label = when {
         relativeHours != null -> "Due $relativeHours hours after saving"
         deadline != null -> "Due ${deadlineLabel(context, deadline)}"
@@ -413,33 +420,36 @@ private fun TodoDeadline(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Copy(label, weight = FontWeight.Bold)
         if (expanded) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(2, 3).forEach { hours ->
-                    Action("In $hours hours", Modifier.weight(1f), primary = relativeHours == hours, enabled = enabled) {
-                        onChange(null, hours)
+            if (isToday) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(2, 3).forEach { hours ->
+                        Action("In $hours hours", Modifier.weight(1f), primary = relativeHours == hours, enabled = enabled) {
+                            onChange(null, hours)
+                        }
                     }
                 }
             }
             Action("Choose a time", icon = "clock", enabled = enabled) {
                 val zone = ZoneId.systemDefault()
                 val initial = deadline?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalTime() }
-                    ?: LocalTime.now(zone).plusHours(1)
+                    ?: if (isToday) LocalTime.now(zone).plusHours(1) else LocalTime.of(17, 0)
                 val theme = if (dark) android.R.style.Theme_Material_Dialog_Alert
                     else android.R.style.Theme_Material_Light_Dialog_Alert
                 TimePickerDialog(context, theme, { _, hour, minute ->
                     val now = Instant.now()
                     val localDate = now.atZone(zone).toLocalDate()
                     val time = LocalTime.of(hour, minute)
-                    val sameDay = localDate.atTime(time).atZone(zone).toInstant()
-                    val next = if (sameDay > now) sameDay
-                        else localDate.plusDays(1).atTime(time).atZone(zone).toInstant()
+                    val selected = plannedDay.atTime(time).atZone(zone).toInstant()
+                    val next = if (plannedDay == localDate && selected <= now)
+                        localDate.plusDays(1).atTime(time).atZone(zone).toInstant()
+                    else selected
                     onChange(next.toEpochMilli(), null)
                 }, initial.hour, initial.minute, DateFormat.is24HourFormat(context)).show()
             }
             if (deadline != null || relativeHours != null) {
                 Action("Remove deadline", enabled = enabled) { onChange(null, null) }
             }
-            Copy("Turn on To-do deadlines in Settings to get an alert if it’s still unfinished.",
+            Copy("Turn on To-do deadlines in Settings for halfway and deadline alerts.",
                 size = 14, lineHeight = 19, color = colors.secondary)
         } else {
             Action(if (deadline == null && relativeHours == null) "Add deadline" else "Change deadline",

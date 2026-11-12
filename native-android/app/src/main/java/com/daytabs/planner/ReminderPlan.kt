@@ -7,21 +7,24 @@ import java.time.ZoneId
 internal enum class ReminderKind(val title: String, val setting: String, val description: String) {
     TODOS("Unfinished to-dos", "Pending to-dos", "7 PM if today’s list still has unfinished items."),
     GOALS("Goal deadlines", "Goal deadlines", "9 AM the day before and on the finish date."),
-    TODO_DEADLINE("To-do deadline", "To-do deadlines", "At each deadline while the to-do is still unfinished."),
+    TODO_DEADLINE("To-do deadline", "To-do deadlines", "Halfway through the available time and at the deadline if unfinished."),
     PROGRESS("Goal progress notes", "Daily goal progress notes", "8 PM for active goals without a progress note today."),
+    TODO_HALFWAY("Half the time left", "To-do deadlines", "A reminder halfway to the deadline."),
     ;
+
+    val timed: Boolean get() = this == TODO_DEADLINE || this == TODO_HALFWAY
 
     fun enabled(prefs: ReminderPreferences): Boolean = when (this) {
         TODOS -> prefs.todos
         GOALS -> prefs.goals
-        TODO_DEADLINE -> prefs.todoDeadlines
+        TODO_DEADLINE, TODO_HALFWAY -> prefs.todoDeadlines
         PROGRESS -> prefs.progress
     }
 
     fun set(prefs: ReminderPreferences, enabled: Boolean): ReminderPreferences = when (this) {
         TODOS -> prefs.copy(todos = enabled)
         GOALS -> prefs.copy(goals = enabled)
-        TODO_DEADLINE -> prefs.copy(todoDeadlines = enabled)
+        TODO_DEADLINE, TODO_HALFWAY -> prefs.copy(todoDeadlines = enabled)
         PROGRESS -> prefs.copy(progress = enabled)
     }
 }
@@ -61,9 +64,17 @@ internal fun List<Entry>.awaitingProgress(day: LocalDate) = count {
 internal fun progressMessage(count: Int) = if (count == 1) "Add a progress note for 1 active goal today."
     else "Add progress notes for $count active goals today."
 
-internal fun PlannerState.pendingDeadlines() = records.asSequence()
-    .filter { it.key.startsWith("todo:") }.flatMap { it.value.asSequence() }
-    .filter { !it.completed && it.deadline != null }
+private fun PlannerState.pendingDeadlines() = records.asSequence()
+    .filter { it.key.startsWith("todo:") }.flatMap { (key, entries) ->
+        val day = parseDay(key.substringAfter(':')) ?: return@flatMap emptySequence()
+        entries.asSequence().filter { !it.completed && it.deadline != null }.map { day to it }
+    }
+
+private fun Entry.halfway(day: LocalDate, zone: ZoneId): Long? {
+    val end = deadline ?: return null
+    val start = deadlineStart ?: day.atStartOfDay(zone).toInstant().toEpochMilli()
+    return if (end > start) start + (end - start) / 2 else null
+}
 
 internal fun planReminders(
     state: PlannerState,
@@ -94,10 +105,17 @@ internal fun planReminders(
             addAll(deadlines)
         }
         if (state.reminders.todoDeadlines) {
-            val deadlines = state.pendingDeadlines().mapNotNull { it.deadline }.distinct().sorted()
-                .map { ReminderAlarm(ReminderKind.TODO_DEADLINE, it.toString(), it) }
-                .filter { isDue(it) && it.time > nowMs - 24 * 3_600_000L }.take(61)
-            addAll(deadlines)
+            val deadlines = state.pendingDeadlines().toList()
+            val alerts = deadlines.flatMap { (day, entry) ->
+                val end = requireNotNull(entry.deadline)
+                val midpoint = entry.halfway(day, zone)?.takeIf { nowMs < end }
+                listOfNotNull(
+                    ReminderAlarm(ReminderKind.TODO_DEADLINE, end.toString(), end),
+                    midpoint?.let { ReminderAlarm(ReminderKind.TODO_HALFWAY, it.toString(), it) },
+                )
+            }.distinct().sortedBy { it.time }
+                .filter { isDue(it) && it.time > nowMs - 24 * 3_600_000L }.take(122)
+            addAll(alerts)
         }
         if (state.reminders.progress) {
             // Only the next applicable day needs an alarm. Delivery plans the following day.
@@ -116,12 +134,19 @@ internal fun planReminders(
 
 internal fun reminderBody(state: PlannerState, alarm: ReminderAlarm, today: LocalDate): String? {
     if (!alarm.kind.enabled(state.reminders)) return null
-    if (alarm.kind == ReminderKind.TODO_DEADLINE) {
-        val items = state.pendingDeadlines().filter { it.deadline == alarm.time }.toList()
+    if (alarm.kind.timed) {
+        val zone = ZoneId.systemDefault()
+        val now = System.currentTimeMillis()
+        val half = alarm.kind == ReminderKind.TODO_HALFWAY
+        val items = state.pendingDeadlines().filter { (day, entry) ->
+            if (half) entry.halfway(day, zone) == alarm.time && requireNotNull(entry.deadline) > now
+            else entry.deadline == alarm.time
+        }.map { it.second }.toList()
         return when (items.size) {
             0 -> null
-            1 -> "Still unfinished: ${items.single().title}"
-            else -> "${items.size} to-dos have reached their deadline."
+            1 -> if (half) "Halfway to the deadline: ${items.single().title}" else "Still unfinished: ${items.single().title}"
+            else -> if (half) "${items.size} to-dos are halfway to their deadlines."
+                else "${items.size} to-dos have reached their deadline."
         }
     }
     if (parseDay(alarm.token) != today) return null
@@ -129,6 +154,6 @@ internal fun reminderBody(state: PlannerState, alarm: ReminderAlarm, today: Loca
         ReminderKind.TODOS -> state.todos(today).count { !it.completed }.takeIf { it > 0 }?.let(::todoMessage)
         ReminderKind.GOALS -> goalMessage(state.goals, today, false).takeIf { it.isNotEmpty() }
         ReminderKind.PROGRESS -> state.goals.awaitingProgress(today).takeIf { it > 0 }?.let(::progressMessage)
-        ReminderKind.TODO_DEADLINE -> null
+        ReminderKind.TODO_DEADLINE, ReminderKind.TODO_HALFWAY -> null
     }
 }

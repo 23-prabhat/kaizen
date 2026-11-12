@@ -6,14 +6,13 @@ import { Copy, Heading, Page } from '@/components/ui';
 import { addDays, dayLabel, firstCalendarDay, formatDay } from '@/lib/calendar';
 import { useToday } from '@/lib/clock';
 import { actionInk, useAppearance } from '@/lib/theme';
-import { usePlannerQuery, useTodoActivity } from '@/lib/use-entries';
+import { useTodoActivity } from '@/lib/use-entries';
 
 export default function History() {
   const today = useToday();
   const yesterday = addDays(today, -1);
   const { colors } = useAppearance();
-  const { offline } = usePlannerQuery({ kind: 'todo', day: yesterday }, false);
-  const activity = useTodoActivity(today, offline);
+  const activity = useTodoActivity(today);
   const recent = (activity.data ?? []).filter(item => item.day < today && item.done + item.remaining > 0).reverse();
   const [selected, setSelected] = useState<string | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);

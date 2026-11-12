@@ -2,7 +2,7 @@
 
 ## First release
 
-Build a personal planner for Android and iOS with React Native, Expo, and TypeScript. Open the Dashboard immediately and save data on the device by default. Keep Supabase as an optional backend. A user can add a to-do with an optional note, track goals with flexible dates, and look up what they did on an earlier date.
+Build a personal planner with a native Kotlin Android release and an Expo implementation for iOS and web. Open the Dashboard immediately and save data on the device. A user can add a to-do with an optional note, track goals with flexible dates, and look up what they did on an earlier date.
 
 ### Screens and actions
 
@@ -23,7 +23,7 @@ Use labeled bottom tabs for Dashboard, To-dos, Goals, History, and Settings. Reu
 - Keep both finished and unfinished to-dos on their original dates when midnight passes. History is read-only. Refresh today’s lists at local midnight and on app resume. If a to-do editor is already open at midnight, save to the date displayed in the editor.
 - Count the start date as day one for goal duration. A goal is active from the start date through the finish date. The user marks each goal complete.
 - Schedule a reminder at 7 PM if today’s to-do list has unfinished items. Remind users about unfinished goals at 9 AM the day before and on the finish date. Reminder times use the device’s local time. The app asks for notification permission when the user turns on a reminder.
-- Start in Light mode and persist the chosen appearance on the device. Store data locally unless Supabase mode is explicitly configured. Keep editor input on save failure and give users a retry action. Supabase mode requires connectivity and uses a persistent, owner-isolated guest session.
+- Start in Light mode and persist the chosen appearance on the device. Keep editor input on save failure and give users a retry action.
 
 ## Visual direction
 
@@ -44,19 +44,13 @@ Use dark ink on accent fills in both modes. Use Bricolage Grotesque for headings
 ## Technical plan
 
 - Use Expo Router for tab navigation and the editor modal. Share date calculations, themed components, and the editor between screens. [Expo Router documentation](https://docs.expo.dev/router/introduction/)
-- Use device storage as the default planner and an on-device file picker for report import. In Supabase mode, use the Supabase JavaScript client for persistent anonymous sessions and Postgres queries. Keep privileged credentials on the server. [Supabase Expo React Native guide](https://supabase.com/docs/guides/getting-started/tutorials/with-expo-react-native)
-- Enable Row Level Security on both tables. Grant authenticated users access to their own rows only. Check ownership on reads, inserts, updates, and deletes, including the resulting row on updates. Index `(user_id, task_date)` and `(user_id, finish_date)`. [Supabase Row Level Security documentation](https://supabase.com/docs/guides/database/postgres/row-level-security)
-
-| Table | Fields and rules |
-| --- | --- |
-| `todos` | `id` (UUID primary key), `user_id` (required foreign key to `auth.users`), `title` (required nonblank text), `note` (optional text), `task_date` (`date`), `completed_at` (nullable `timestamptz`), `created_at`, `updated_at`. |
-| `goals` | `id`, `user_id`, `title`, `completed_at`, `created_at`, `updated_at` with the same rules as `todos`. Store `start_date` and `finish_date` as dates. The finish date must be on or after the start date. |
-
-Store audit timestamps as `timestamptz`. Use `completed_at` as the single source of completion state. Derive Dashboard counts from today’s to-dos and goals whose dates include today. Generate each new row's UUID once so a save retry can reconcile an earlier write without creating a duplicate. Refresh the dashboard and history after writes and imports. Scope Supabase query caches to the guest ID.
+- Use app-private storage for planner entries and preferences. Use Android’s document picker for Excel, CSV, and report imports.
+- Keep each to-do attached to its planned calendar date. Store optional deadline timestamps and calculate halfway alerts from the start of the available time window.
+- Use the Android widget collection for the current day’s list, including both open and completed items.
 
 ## Build order
 
-1. **Foundation.** Scaffold Expo and TypeScript. Add tab navigation, theme tokens, and appearance persistence. Create the Supabase migrations, ownership policies, and device persistence.
+1. **Foundation.** Scaffold Expo and TypeScript. Add tab navigation, theme tokens, and appearance persistence. Add device persistence.
 2. **Daily checklist.** Build Today, the to-do editor, notes, completion, and deletion. Handle validation, loading, empty lists, save failures, and retry.
 3. **History.** Add day navigation and the calendar picker. Verify that rollover and a time-zone change preserve previously saved lists and notes.
 4. **Goals and Dashboard.** Build flexible date and duration scheduling, goal editing, and the overview of today’s to-dos and active goals.
@@ -70,5 +64,5 @@ Store audit timestamps as `timestamptz`. Use `completed_at` as the single source
 - Switch appearance and restart. The selected mode persists. System mode responds to a device theme change.
 - Enable reminders from the dashboard bell on a native device, then complete all of today’s to-dos and a goal with a scheduled reminder. Verify their alerts are canceled. Check that another unfinished goal can still produce a deadline alert.
 - Interrupt a save and retry. The input stays available and a successful retry results in a single row.
-- Open the app in a fresh browser profile or on another device. It opens without signing in and cannot see the first planner. In optional Supabase mode, verify the same isolation with two anonymous sessions.
+- Open the app in a fresh browser profile or on another device. It opens without signing in and cannot see the first planner.
 - Import the November report and verify seven completed entries, two remaining tasks, and eight logged dates in the 14-day window ending November 12. Import it again and verify no duplicates.

@@ -43,7 +43,7 @@
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/kaizen-foreground.png",
-        "backgroundColor": "#FFD947"
+        "backgroundColor": "#D6BCFF"
       }
     },
     "web": { "bundler": "metro", "output": "single", "favicon": "./assets/kaizen-icon.png" }

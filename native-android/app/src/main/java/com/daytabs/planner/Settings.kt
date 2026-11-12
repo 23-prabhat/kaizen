@@ -42,6 +42,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -97,6 +99,18 @@ internal fun ColumnScope.Settings(
             }
         }
     }
+    val todoFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            change("Could not read this file. Choose a valid .xlsx or CSV file.") {
+                val imported = withContext(Dispatchers.IO) {
+                    val content = readDocument(context, uri, MAX_TODO_FILE_BYTES, "Choose an Excel or CSV file under 2 MB.")
+                    store.addImportedTodos(parseTodoFile(content, Instant.now(), ZoneId.systemDefault()))
+                }
+                status = if (imported == 0) "These to-dos are already in your planner."
+                    else "Imported $imported ${if (imported == 1) "to-do" else "to-dos"}."
+            }
+        }
+    }
 
     Heading("Settings")
     Column(Modifier.weight(1f).verticalScroll(scroll).padding(bottom = 20.dp),
@@ -133,9 +147,14 @@ internal fun ColumnScope.Settings(
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Copy("Saved on this device", weight = FontWeight.SemiBold)
-                Copy("Import a Kaizen report to add dated to-dos and notes to this planner.",
+                Copy("Plan multiple days from an Excel (.xlsx) or CSV file. Use the columns date, todo work, and deadline. Leave the deadline blank for an all-day to-do.",
                     size = 14, lineHeight = 19, color = palette.secondary)
-                Action("Import report", icon = "download", enabled = !busy) {
+                Action("Import Excel or CSV", icon = "download", enabled = !busy) {
+                    status = ""
+                    error = ""
+                    todoFilePicker.launch(arrayOf("*/*"))
+                }
+                Action("Import Kaizen JSON report", enabled = !busy) {
                     status = ""
                     error = ""
                     reportPicker.launch(arrayOf("*/*"))

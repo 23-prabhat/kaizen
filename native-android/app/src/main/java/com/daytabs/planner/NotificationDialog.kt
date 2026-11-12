@@ -159,7 +159,7 @@ internal fun ReminderSettings(
 
     Panel(Modifier.fillMaxWidth()) {
         Column {
-            ReminderKind.entries.forEachIndexed { index, kind ->
+            ReminderKind.entries.filterNot { it == ReminderKind.TODO_HALFWAY }.forEachIndexed { index, kind ->
                 if (index > 0) Rule()
                 ReminderToggle(kind.setting, kind.description, kind.enabled(preferences), !busy && pendingKind == null) {
                     change(kind, it)

@@ -2,10 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { AppState } from 'react-native';
-import { useAuth } from './auth';
 import { localDay } from './calendar';
 import { useToday } from './clock';
-import { goalsScope, scopeKey } from './planner';
+import { goalsScope, localPlannerOwner as owner, scopeKey } from './planner';
 import { getReminderPermission, requestReminderPermission, supportsReminders, syncDeviceReminders } from './reminder-device';
 import { goalDeadlineReminders, pendingTodoReminders, type ReminderKind, type ReminderPermission, type ReminderPlan } from './reminder-plan';
 import { usePlannerQuery } from './use-entries';
@@ -25,36 +24,34 @@ type Reminders = {
 const ReminderContext = createContext<Reminders | null>(null);
 
 export function ReminderProvider({ children }: PropsWithChildren) {
-  const { account, loading } = useAuth();
-  const owner = account?.id;
   const today = useToday();
   const client = useQueryClient();
-  const [stored, setStored] = useState<{ owner: string; preferences: Preferences }>();
+  const [stored, setStored] = useState<Preferences>();
   const [permission, setPermission] = useState<ReminderPermission | null>(null);
   const [syncError, setSyncError] = useState(false);
   const [resume, setResume] = useState(0);
   const changing = useRef(false);
-  const ready = Boolean(owner && stored?.owner === owner);
-  const preferences = ready ? stored!.preferences : off;
+  const ready = stored !== undefined;
+  const preferences = stored ?? off;
   const enabled = supportsReminders && ready && permission === 'granted';
   const todoOn = enabled && preferences.todos;
   const goalOn = enabled && preferences.goals;
-  const { query: todos } = usePlannerQuery({ kind: 'todo', day: today }, todoOn);
-  const { query: goals } = usePlannerQuery(goalsScope, goalOn);
+  const todos = usePlannerQuery({ kind: 'todo', day: today }, todoOn);
+  const goals = usePlannerQuery(goalsScope, goalOn);
   const todoData = todoOn ? todos.data : undefined;
   const goalData = goalOn ? goals.data : undefined;
 
   useEffect(() => {
-    if (!supportsReminders || !owner) return;
+    if (!supportsReminders) return;
     let active = true;
     AsyncStorage.getItem(`daytabs.reminders:${owner}`).then(saved => {
       const values: Partial<Preferences> | null = saved ? JSON.parse(saved) : null;
-      if (active) setStored({ owner, preferences: { todos: values?.todos === true, goals: values?.goals === true } });
+      if (active) setStored({ todos: values?.todos === true, goals: values?.goals === true });
     }).catch(() => {
-      if (active) setStored({ owner, preferences: off });
+      if (active) setStored(off);
     });
     return () => { active = false; };
-  }, [owner]);
+  }, []);
 
   useEffect(() => {
     if (!supportsReminders) return;
@@ -78,13 +75,13 @@ export function ReminderProvider({ children }: PropsWithChildren) {
   }, []);
 
   useEffect(() => {
-    if (!resume || !owner) return;
+    if (!resume) return;
     if (todoOn) void client.invalidateQueries({ queryKey: ['planner', owner, scopeKey({ kind: 'todo', day: today })] });
     if (goalOn) void client.invalidateQueries({ queryKey: ['planner', owner, scopeKey(goalsScope)] });
-  }, [client, goalOn, owner, resume, today, todoOn]);
+  }, [client, goalOn, resume, today, todoOn]);
 
   useEffect(() => {
-    if (!supportsReminders || loading) return;
+    if (!supportsReminders) return;
     const plan: ReminderPlan = {};
     const now = new Date();
     if (ready) {
@@ -100,10 +97,10 @@ export function ReminderProvider({ children }: PropsWithChildren) {
       if (active) setSyncError(true);
     });
     return () => { active = false; };
-  }, [goalData, goalOn, loading, owner, permission, preferences, ready, resume, today, todoData, todoOn]);
+  }, [goalData, goalOn, permission, preferences, ready, resume, today, todoData, todoOn]);
 
   async function change(kind: ReminderKind, enabled: boolean) {
-    if (!supportsReminders || !owner || !ready || changing.current) return;
+    if (!supportsReminders || !ready || changing.current) return;
     changing.current = true;
     try {
       if (enabled) {
@@ -114,7 +111,7 @@ export function ReminderProvider({ children }: PropsWithChildren) {
       }
       const next = { ...preferences, [kind]: enabled };
       await AsyncStorage.setItem(`daytabs.reminders:${owner}`, JSON.stringify(next));
-      setStored({ owner, preferences: next });
+      setStored(next);
     } finally {
       changing.current = false;
     }

@@ -1,9 +1,11 @@
 <resources>
     <string name="app_name">Kaizen</string>
-    <color name="icon_background">#FFD947</color>
-    <string name="widget_name">Daily motivation</string>
-    <string name="widget_header">Kaizen · Daily motivation</string>
-    <string name="widget_description">Read today’s Kaizen motivation line.</string>
+    <color name="icon_background">#D6BCFF</color>
+    <string name="widget_name">Today’s to-dos</string>
+    <string name="widget_description">Scroll through today’s Kaizen to-dos.</string>
+    <string name="widget_empty">No to-dos for today</string>
+    <string name="widget_task_done">Done</string>
+    <string name="widget_task_open">Open</string>
     <style name="Theme.Kaizen" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowLightStatusBar">true</item>

@@ -8,7 +8,7 @@ const args = process.argv.slice(2);
 if (args.some(arg => /^(--lan|--tunnel|--host)(=|$)/.test(arg))) {
   throw new Error('The work report demo runs on localhost.');
 }
-const reports = await readFile(new URL('../supabase/november-work.json', import.meta.url), 'utf8').catch(error => {
+const reports = await readFile(new URL('../.expo/kaizen-preview/report.json', import.meta.url), 'utf8').catch(error => {
   if (error.code !== 'ENOENT') throw error;
   return null;
 });
@@ -18,9 +18,6 @@ const expo = spawn(process.execPath, [require.resolve('expo/bin/cli'), 'start', 
   env: {
     ...process.env,
     EXPO_NO_DOTENV: '1',
-    EXPO_PUBLIC_DAYTABS_STORAGE: 'local',
-    EXPO_PUBLIC_SUPABASE_URL: '',
-    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: '',
     EXPO_PUBLIC_DAYTABS_LOCAL_REPORT: reports ? JSON.stringify(JSON.parse(reports)) : '',
   },
   stdio: 'inherit',

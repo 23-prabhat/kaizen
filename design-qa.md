@@ -8,6 +8,6 @@ The reference is [`assets/today-screen.png`](assets/today-screen.png), an 887 ×
 - **Correction.** The first phone-width capture clipped the tab labels. Giving the tab bar explicit height, including the safe area, resolved clipping in the final capture. Inactive panes are also hidden from the accessibility tree.
 - **Interaction checks.** The browser demo passed title validation, task and multiline note saving, completion, confirmed deletion, separate target periods, calendar selection, read-only history, and appearance persistence across reloads. No application errors appeared during those flows. Metro reported disconnects when the preview server restarted.
 
-This visual result covers the browser preview. Device rendering and hosted Supabase sign-in and saving still need end-to-end checks.
+This visual result covers the browser preview at the time of capture.
 
 final result: passed

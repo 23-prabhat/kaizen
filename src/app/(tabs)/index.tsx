@@ -141,7 +141,6 @@ function ActivityChart({ data }: { data: TodoActivity[] }) {
 }
 
 function DataStatus({ source, label }: { source: ReturnType<typeof useEntries>; label: string }) {
-  if (source.offline) return source.query.data ? null : <Copy secondary>{`Reconnect to load ${label}.`}</Copy>;
   if (source.query.isError) return <View style={styles.status}>
     <Message>{`Could not ${source.query.data ? 'refresh' : 'load'} ${label}.`}</Message>
     <Action label={`Retry ${label}`} onPress={() => void source.query.refetch()} />
@@ -157,7 +156,7 @@ export default function Dashboard() {
   const { colors } = useAppearance();
   const todos = useEntries({ kind: 'todo', day: today });
   const goals = useEntries(goalsScope);
-  const activity = useTodoActivity(today, todos.offline);
+  const activity = useTodoActivity(today);
   const remaining = todos.query.data?.filter(entry => !entry.completedAt) ?? [];
   const completed = todos.query.data?.filter(entry => entry.completedAt) ?? [];
   const active = (goals.query.data ?? []).flatMap(entry =>
@@ -172,9 +171,7 @@ export default function Dashboard() {
 
   const missingSources = [todos, goals].filter(source => !source.query.data);
   let notificationStatus: string | undefined;
-  if (missingSources.some(source => source.offline)) {
-    notificationStatus = 'Reconnect to check all notifications.';
-  } else if (missingSources.some(source => source.query.isError)) {
+  if (missingSources.some(source => source.query.isError)) {
     notificationStatus = 'Some notifications couldn’t load.';
   } else if (missingSources.length) {
     notificationStatus = 'Checking notifications…';
@@ -195,7 +192,6 @@ export default function Dashboard() {
     <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <DeskCover today={today} onChangeAvatar={() => router.navigate({ pathname: '/settings', params: { section: 'avatar' } })} />
       <DailyMotivationCard today={today} />
-      {(todos.offline || goals.offline) && <Message>You’re offline.</Message>}
       <View>
         <SectionTitle title="Today’s to-dos" link="View to-dos" onPress={() => router.navigate('/todos')} />
         <DataStatus source={todos} label="to-dos" />
@@ -206,8 +202,7 @@ export default function Dashboard() {
       </View>
       <View>
         <SectionTitle title="Activity" link="View history" onPress={() => router.navigate('/history')} />
-        {activity.data ? <ActivityChart data={activity.data} /> : todos.offline ? <Copy secondary>Reconnect to load activity.</Copy>
-          : activity.isError ? <View style={styles.status}>
+        {activity.data ? <ActivityChart data={activity.data} /> : activity.isError ? <View style={styles.status}>
             <Message>Could not load activity.</Message><Action label="Retry activity" onPress={() => void activity.refetch()} />
           </View> : <View style={styles.loading}><Loading label="Loading activity" /></View>}
       </View>

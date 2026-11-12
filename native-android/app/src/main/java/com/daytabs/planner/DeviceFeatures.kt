@@ -6,10 +6,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
 import android.content.BroadcastReceiver
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -20,8 +17,6 @@ import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
 import android.util.Base64
-import android.view.View
-import android.widget.RemoteViews
 import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayOutputStream
 import java.time.Instant
@@ -140,7 +135,7 @@ internal object DeviceReminders {
         }
         for (alarm in desired) {
             val oldIntent = pending(context, alarm, PendingIntent.FLAG_NO_CREATE)
-            val timed = alarm.kind == ReminderKind.TODO_DEADLINE
+            val timed = alarm.kind.timed
             if (!reset && !payloadChanged && alarm.key in existing && oldIntent != null && (!timed || !exactChanged)) continue
             val intent = requireNotNull(pending(context, alarm, PendingIntent.FLAG_UPDATE_CURRENT))
             if (timed && exact) {
@@ -177,7 +172,7 @@ internal object DeviceReminders {
         if (alarm.key !in scheduled || time > System.currentTimeMillis()) return
         stored.edit().putStringSet("scheduled", scheduled - alarm.key).apply()
         val state = PlannerStore(context).load()
-        if (canNotify(context) && (kind != ReminderKind.TODO_DEADLINE ||
+        if (canNotify(context) && (!kind.timed ||
                 System.currentTimeMillis() - time < 24 * 3_600_000L)) {
             reminderBody(state, alarm, LocalDate.now())?.let { body ->
                 ensureChannel(context)
@@ -200,7 +195,7 @@ internal object DeviceReminders {
         builder.setSmallIcon(R.drawable.ic_reminder).setContentTitle(kind.title).setContentText(message)
             .setStyle(Notification.BigTextStyle().bigText(message)).setAutoCancel(true).setContentIntent(tap)
         if (Build.VERSION.SDK_INT < 26) builder.setDefaults(Notification.DEFAULT_ALL)
-        val tag = alarm.token.takeIf { kind == ReminderKind.TODO_DEADLINE }
+        val tag = alarm.token.takeIf { kind.timed }
         context.getSystemService(NotificationManager::class.java).notify(tag, 100 + kind.ordinal, builder.build())
     }
 }
@@ -226,7 +221,7 @@ class DeviceClockReceiver : BroadcastReceiver() {
 
 private val receiverExecutor = Executors.newSingleThreadExecutor()
 
-private fun BroadcastReceiver.inBackground(work: () -> Unit) {
+internal fun BroadcastReceiver.inBackground(work: () -> Unit) {
     val pending = goAsync()
     receiverExecutor.execute {
         try {
@@ -235,31 +230,6 @@ private fun BroadcastReceiver.inBackground(work: () -> Unit) {
             android.util.Log.w("Kaizen", "Could not refresh scheduled planner features.", failure)
         } finally {
             pending.finish()
-        }
-    }
-}
-
-class DaytabsMotivationProvider : AppWidgetProvider() {
-    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        refresh(context, appWidgetManager, appWidgetIds)
-    }
-
-    companion object {
-        fun refresh(context: Context) {
-            val manager = AppWidgetManager.getInstance(context)
-            refresh(context, manager, manager.getAppWidgetIds(ComponentName(context, DaytabsMotivationProvider::class.java)))
-        }
-
-        private fun refresh(context: Context, manager: AppWidgetManager, ids: IntArray) {
-            if (ids.isEmpty()) return
-            val quote = dailyMotivation(LocalDate.now())
-            val views = RemoteViews(context.packageName, R.layout.motivation_widget)
-            views.setTextViewText(R.id.widget_quote, quote.displayLine)
-            views.setTextViewText(R.id.widget_credit, quote.credit)
-            views.setViewVisibility(R.id.widget_credit, if (quote.credit == null) View.GONE else View.VISIBLE)
-            val tap = PendingIntent.getActivity(context, 0, Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
-            views.setOnClickPendingIntent(R.id.widget_root, tap)
-            manager.updateAppWidget(ids, views)
         }
     }
 }
