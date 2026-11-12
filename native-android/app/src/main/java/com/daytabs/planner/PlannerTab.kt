@@ -245,6 +245,13 @@ private fun EntryRow(
                     Copy(it, size = 14, lineHeight = 18, color = palette.secondary,
                         maxLines = if (subtitle == null) 1 else Int.MAX_VALUE)
                 }
+                entry.deadline?.let {
+                    Copy("Due ${deadlineLabel(androidx.compose.ui.platform.LocalContext.current, it)}",
+                        size = 14, lineHeight = 18, color = palette.secondary)
+                }
+                if (entry.schedule != null && entry.progress.any { it.day == today }) {
+                    Copy("Progress noted today", size = 14, lineHeight = 18, color = palette.secondary)
+                }
             }
         }
         if (!last) Rule(Modifier.padding(horizontal = 1.5.dp))

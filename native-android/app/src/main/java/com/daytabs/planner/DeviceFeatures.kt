@@ -24,6 +24,7 @@ import android.view.View
 import android.widget.RemoteViews
 import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayOutputStream
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.UUID
@@ -99,24 +100,6 @@ private fun decodeLegacyAvatar(bytes: ByteArray): Bitmap {
 }
 
 private const val CHANNEL = "daytabs-reminders"
-internal enum class ReminderKind(val title: String, val hour: Int) {
-    TODOS("Unfinished to-dos", 19), GOALS("Goal deadlines", 9)
-}
-
-internal fun todoMessage(count: Int) = "You have $count ${if (count == 1) "to-do" else "to-dos"} left today."
-
-internal fun goalMessage(goals: List<Entry>, day: LocalDate, includeSingleDayTomorrow: Boolean = true): String {
-    val pending = goals.filterNot { it.completed }
-    val dueToday = pending.count { it.schedule?.finish == day }
-    val dueTomorrow = pending.count {
-        val schedule = it.schedule ?: return@count false
-        schedule.finish == day.plusDays(1) && (includeSingleDayTomorrow || schedule.start < schedule.finish)
-    }
-    return listOf("today" to dueToday, "tomorrow" to dueTomorrow).mapNotNull { (whenDue, count) ->
-        if (count == 0) null else "$count ${if (count == 1) "goal is" else "goals are"} due $whenDue."
-    }.joinToString(" ")
-}
-
 internal object DeviceReminders {
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= 26) {
@@ -134,60 +117,51 @@ internal object DeviceReminders {
                 context.getSystemService(NotificationManager::class.java).getNotificationChannel(CHANNEL)?.importance !=
                 NotificationManager.IMPORTANCE_NONE)
 
-    private data class Alarm(val kind: ReminderKind, val day: LocalDate) {
-        val key: String get() = "${kind.name}:$day"
-        val time: Long get() = day.atTime(kind.hour, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-    }
+    fun canScheduleExact(context: Context) = Build.VERSION.SDK_INT < 31 ||
+        context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
 
     @Synchronized
     fun reconcile(context: Context, state: PlannerState, reset: Boolean = false) {
         val alarms = context.getSystemService(AlarmManager::class.java)
         val stored = context.getSharedPreferences("kaizen_alarms", Context.MODE_PRIVATE)
         val existing = stored.getStringSet("scheduled", emptySet()).orEmpty()
-        val today = LocalDate.now()
-        val now = System.currentTimeMillis()
-        val candidates = buildList {
-            if (!canNotify(context)) return@buildList
-            if (state.reminders.todos && state.todos(today).any { !it.completed }) {
-                add(Alarm(ReminderKind.TODOS, today))
-            }
-            if (state.reminders.goals) {
-                val days = state.goals.asSequence().filterNot { it.completed }.mapNotNull { it.schedule }
-                    .flatMap { if (it.start < it.finish) sequenceOf(it.finish.minusDays(1), it.finish) else sequenceOf(it.finish) }
-                    .filter { it >= today }.distinct().sorted().take(61)
-                addAll(days.map { Alarm(ReminderKind.GOALS, it) })
+        val exact = canScheduleExact(context)
+        val exactChanged = exact != stored.getBoolean("exact", false)
+        val payloadChanged = stored.getInt("version", 0) != 1
+        val desired = if (canNotify(context)) {
+            planReminders(state, Instant.now(), ZoneId.systemDefault(), if (reset) emptySet() else existing)
+        } else emptyList()
+        val keys = desired.mapTo(mutableSetOf()) { it.key }
+        (existing - keys).mapNotNull(ReminderAlarm::fromKey).forEach { alarm ->
+            pending(context, alarm, PendingIntent.FLAG_NO_CREATE)?.let {
+                alarms.cancel(it)
+                it.cancel()
             }
         }
-        val desired = candidates.filter { it.time > now || (!reset && "${it.key}:${it.time}" in existing) }
-            .associateBy { "${it.key}:${it.time}" }
-        (existing - desired.keys).forEach { saved ->
-            val parts = saved.split(':')
-            val kind = ReminderKind.entries.firstOrNull { it.name == parts.firstOrNull() }
-            val day = parseDay(parts.getOrNull(1))
-            if (kind != null && day != null) {
-                val intent = pending(context, Alarm(kind, day), PendingIntent.FLAG_NO_CREATE)
-                if (intent != null) {
-                    alarms.cancel(intent)
-                    intent.cancel()
+        for (alarm in desired) {
+            val oldIntent = pending(context, alarm, PendingIntent.FLAG_NO_CREATE)
+            val timed = alarm.kind == ReminderKind.TODO_DEADLINE
+            if (!reset && !payloadChanged && alarm.key in existing && oldIntent != null && (!timed || !exactChanged)) continue
+            val intent = requireNotNull(pending(context, alarm, PendingIntent.FLAG_UPDATE_CURRENT))
+            if (timed && exact) {
+                try {
+                    alarms.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.time, intent)
+                    continue
+                } catch (_: SecurityException) {
+                    // Android can revoke exact alarm access while this plan is being applied.
                 }
             }
+            alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.time, intent)
         }
-        val active = mutableSetOf<String>()
-        desired.forEach { (key, alarm) ->
-            if (!reset && key in existing) {
-                active += key
-            } else if (alarm.time > now) {
-                val intent = requireNotNull(pending(context, alarm, PendingIntent.FLAG_UPDATE_CURRENT))
-                alarms.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, alarm.time, intent)
-                active += key
-            }
+        if (keys != existing || exactChanged || payloadChanged) {
+            stored.edit().putStringSet("scheduled", keys).putBoolean("exact", exact).putInt("version", 1).apply()
         }
-        if (active != existing) stored.edit().putStringSet("scheduled", active).apply()
     }
 
-    private fun pending(context: Context, alarm: Alarm, flag: Int): PendingIntent? {
+    private fun pending(context: Context, alarm: ReminderAlarm, flag: Int): PendingIntent? {
         val intent = Intent(context, ReminderReceiver::class.java)
-            .setData(Uri.parse("kaizen://reminder/${alarm.kind.name}/${alarm.day}"))
+            .setData(Uri.parse("kaizen://reminder/${alarm.kind.name}/${alarm.token}"))
+            .putExtra("scheduledTime", alarm.time)
         return PendingIntent.getBroadcast(context, 0, intent, flag or PendingIntent.FLAG_IMMUTABLE)
     }
 
@@ -195,37 +169,39 @@ internal object DeviceReminders {
     fun deliver(context: Context, intent: Intent) {
         val route = intent.data?.pathSegments.orEmpty()
         val kind = ReminderKind.entries.firstOrNull { it.name == route.getOrNull(0) } ?: return
-        val day = parseDay(route.getOrNull(1)) ?: return
-        val alarm = Alarm(kind, day)
+        val token = route.getOrNull(1) ?: return
         val stored = context.getSharedPreferences("kaizen_alarms", Context.MODE_PRIVATE)
         val scheduled = stored.getStringSet("scheduled", emptySet()).orEmpty()
-        val updated = scheduled.filterNot { it.startsWith("${alarm.key}:") }.toSet()
-        if (scheduled == updated) return
-        stored.edit().putStringSet("scheduled", updated).apply()
+        val time = intent.getLongExtra("scheduledTime", 0)
+        val alarm = ReminderAlarm(kind, token, time)
+        if (alarm.key !in scheduled || time > System.currentTimeMillis()) return
+        stored.edit().putStringSet("scheduled", scheduled - alarm.key).apply()
         val state = PlannerStore(context).load()
-        if (day == LocalDate.now() && canNotify(context)) {
-            val body = when (kind) {
-                ReminderKind.TODOS -> if (state.reminders.todos)
-                    state.todos(day).count { !it.completed }.takeIf { it > 0 }?.let(::todoMessage) else null
-                ReminderKind.GOALS -> if (state.reminders.goals) goalMessage(state.goals, day, false) else null
-            }
-            if (!body.isNullOrEmpty()) {
+        if (canNotify(context) && (kind != ReminderKind.TODO_DEADLINE ||
+                System.currentTimeMillis() - time < 24 * 3_600_000L)) {
+            reminderBody(state, alarm, LocalDate.now())?.let { body ->
                 ensureChannel(context)
-                show(context, kind, body)
+                show(context, alarm, body)
             }
         }
         reconcile(context, state)
     }
 
     @Suppress("DEPRECATION")
-    private fun show(context: Context, kind: ReminderKind, message: String) {
+    private fun show(context: Context, alarm: ReminderAlarm, message: String) {
+        val kind = alarm.kind
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(context, CHANNEL) else Notification.Builder(context)
-        val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val tap = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+        val tab = if (kind == ReminderKind.GOALS || kind == ReminderKind.PROGRESS) Tab.GOALS else Tab.TODOS
+        val intent = Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(REMINDER_TAB, tab.name)
+        val tap = PendingIntent.getActivity(context, 100 + kind.ordinal, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         builder.setSmallIcon(R.drawable.ic_reminder).setContentTitle(kind.title).setContentText(message)
             .setStyle(Notification.BigTextStyle().bigText(message)).setAutoCancel(true).setContentIntent(tap)
         if (Build.VERSION.SDK_INT < 26) builder.setDefaults(Notification.DEFAULT_ALL)
-        context.getSystemService(NotificationManager::class.java).notify(100 + kind.ordinal, builder.build())
+        val tag = alarm.token.takeIf { kind == ReminderKind.TODO_DEADLINE }
+        context.getSystemService(NotificationManager::class.java).notify(tag, 100 + kind.ordinal, builder.build())
     }
 }
 
@@ -239,7 +215,7 @@ class DeviceClockReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_TIME_CHANGED,
-            Intent.ACTION_TIMEZONE_CHANGED -> inBackground {
+            Intent.ACTION_TIMEZONE_CHANGED, AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED -> inBackground {
                 val app = context.applicationContext
                 DeviceReminders.reconcile(app, PlannerStore(app).load(), reset = true)
                 DaytabsMotivationProvider.refresh(app)

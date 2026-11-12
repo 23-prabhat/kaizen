@@ -1,5 +1,6 @@
 package com.daytabs.planner
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -59,9 +60,11 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private var foreground by mutableIntStateOf(0)
+    private var reminderTab by mutableStateOf<Tab?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openReminder(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
@@ -106,7 +109,7 @@ class MainActivity : ComponentActivity() {
             CompositionLocalProvider(LocalPalette provides if (dark) darkPalette else lightPalette) {
                 val current = state
                 if (current != null) {
-                    Kaizen(store, current, today, foreground)
+                    Kaizen(store, current, today, foreground, reminderTab) { reminderTab = null }
                 } else {
                     Box(Modifier.fillMaxSize().background(colors.background)
                         .windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp), contentAlignment = Alignment.Center) {
@@ -129,7 +132,20 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         foreground++
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openReminder(intent)
+    }
+
+    private fun openReminder(intent: Intent) {
+        val destination = intent.getStringExtra(REMINDER_TAB)
+        reminderTab = Tab.entries.firstOrNull { it.name == destination }
+        intent.removeExtra(REMINDER_TAB)
+    }
 }
+
+internal const val REMINDER_TAB = "kaizen.reminder.tab"
 
 internal enum class Tab(val label: String, val icon: String) {
     DASHBOARD("Dashboard", "grid"), TODOS("To-dos", "check-square"), GOALS("Goals", "flag"),
@@ -139,7 +155,14 @@ internal enum class Tab(val label: String, val icon: String) {
 internal data class EditRequest(val key: String, val day: LocalDate, val entry: Entry? = null, val readOnly: Boolean = false)
 
 @Composable
-private fun Kaizen(store: PlannerStore, state: PlannerState, today: LocalDate, foreground: Int) {
+private fun Kaizen(
+    store: PlannerStore,
+    state: PlannerState,
+    today: LocalDate,
+    foreground: Int,
+    reminderTab: Tab?,
+    onReminderOpened: () -> Unit,
+) {
     var tab by rememberSaveable { mutableStateOf(Tab.DASHBOARD) }
     var editor by remember { mutableStateOf<EditRequest?>(null) }
     var notifications by rememberSaveable { mutableStateOf(false) }
@@ -148,6 +171,15 @@ private fun Kaizen(store: PlannerStore, state: PlannerState, today: LocalDate, f
     val tabState = rememberSaveableStateHolder()
     val context = androidx.compose.ui.platform.LocalContext.current
     var reminderError by remember { mutableStateOf(false) }
+
+    LaunchedEffect(reminderTab, editor) {
+        if (reminderTab != null && editor == null) {
+            notifications = false
+            widget = false
+            tab = reminderTab
+            onReminderOpened()
+        }
+    }
 
     LaunchedEffect(state.records, state.reminders, foreground, today) {
         reminderError = try {
@@ -175,7 +207,7 @@ private fun Kaizen(store: PlannerStore, state: PlannerState, today: LocalDate, f
                             tab = destination
                         }, { notifications = true }, { widget = true })
                         Tab.TODOS, Tab.GOALS, Tab.HISTORY -> PlannerTab(tab, state, today, store) { editor = it }
-                        Tab.SETTINGS -> Settings(state, store, settingsReset)
+                        Tab.SETTINGS -> Settings(state, store, settingsReset, foreground, reminderError)
                     }
                 }
             }

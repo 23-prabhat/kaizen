@@ -17,19 +17,27 @@ internal val firstCalendarDay: LocalDate = LocalDate.of(1, 1, 1)
 internal val lastCalendarDay: LocalDate = LocalDate.of(9999, 12, 31)
 
 internal data class Schedule(val start: LocalDate, val finish: LocalDate)
+internal data class ProgressNote(val day: LocalDate, val text: String)
 internal data class Entry(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
     val note: String? = null,
     val completedAt: String? = null,
     val schedule: Schedule? = null,
+    val deadline: Long? = null,
+    val progress: List<ProgressNote> = emptyList(),
 ) {
     val completed: Boolean get() = completedAt != null
 }
 
 internal data class AvatarPhoto(val id: String, val uri: String)
 internal data class Avatars(val photos: List<AvatarPhoto> = emptyList(), val fixedId: String? = null)
-internal data class ReminderPreferences(val todos: Boolean = false, val goals: Boolean = false)
+internal data class ReminderPreferences(
+    val todos: Boolean = false,
+    val goals: Boolean = false,
+    val todoDeadlines: Boolean = false,
+    val progress: Boolean = false,
+)
 internal enum class Appearance(val label: String) { LIGHT("Light"), DARK("Dark"), SYSTEM("System") }
 
 internal data class PlannerState(
@@ -83,7 +91,8 @@ internal class PlannerStore(private val context: Context) {
         if (current.appearance != next.appearance) edit.putString(APPEARANCE, next.appearance.name.lowercase())
         if (current.avatars != next.avatars) edit.putString(AVATAR, encodeAvatars(next.avatars))
         if (current.reminders != next.reminders) edit.putString(REMINDERS, JSONObject()
-            .put("todos", next.reminders.todos).put("goals", next.reminders.goals).toString())
+            .put("todos", next.reminders.todos).put("goals", next.reminders.goals)
+            .put("todoDeadlines", next.reminders.todoDeadlines).put("progress", next.reminders.progress).toString())
         if (current.opening != next.opening) edit.putString(OPENING, next.opening.toString())
         check(edit.commit()) { "Could not save planner storage." }
         mutableState.value = next
@@ -159,7 +168,12 @@ internal class PlannerStore(private val context: Context) {
             appearance = Appearance.entries.firstOrNull { it.name.equals(values[APPEARANCE], true) }
                 ?: Appearance.LIGHT,
             avatars = values[AVATAR]?.let { runCatching { decodeAvatars(it) }.getOrNull() } ?: Avatars(),
-            reminders = ReminderPreferences(reminders?.optBoolean("todos") == true, reminders?.optBoolean("goals") == true),
+            reminders = ReminderPreferences(
+                todos = reminders?.optBoolean("todos") == true,
+                goals = reminders?.optBoolean("goals") == true,
+                todoDeadlines = reminders?.optBoolean("todoDeadlines") == true,
+                progress = reminders?.optBoolean("progress") == true,
+            ),
             opening = values[OPENING]?.toLongOrNull()?.coerceAtLeast(-1) ?: -1,
         )
     }
@@ -184,8 +198,15 @@ private fun decodeRecords(value: String): Map<String, List<Entry>> {
             val schedule = row.optJSONObject("schedule")?.let {
                 Schedule(LocalDate.parse(it.getString("start")), LocalDate.parse(it.getString("finish")))
             }
-            Entry(row.getString("id"), row.getString("title"), row.stringOrNull("note"),
-                row.stringOrNull("completedAt"), schedule)
+            Entry(
+                id = row.getString("id"),
+                title = row.getString("title"),
+                note = row.stringOrNull("note"),
+                completedAt = row.stringOrNull("completedAt"),
+                schedule = schedule,
+                deadline = row.optLong("deadline", 0).takeIf { it > 0 },
+                progress = decodeProgress(row.optJSONArray("progress")),
+            )
         }
     }.toMutableMap()
     val goals = records[GOALS_KEY].orEmpty().toMutableList()
@@ -207,6 +228,14 @@ private fun encodeRecords(records: Map<String, List<Entry>>): String = JSONObjec
                 put(JSONObject().put("id", entry.id).put("title", entry.title)
                     .put("note", entry.note ?: JSONObject.NULL)
                     .put("completedAt", entry.completedAt ?: JSONObject.NULL).apply {
+                        entry.deadline?.let { put("deadline", it) }
+                        if (entry.progress.isNotEmpty()) {
+                            put("progress", JSONArray().apply {
+                                entry.progress.forEach { note ->
+                                    put(JSONObject().put("day", note.day.toString()).put("text", note.text))
+                                }
+                            })
+                        }
                         entry.schedule?.let {
                             put("schedule", JSONObject().put("start", it.start.toString()).put("finish", it.finish.toString()))
                         }
@@ -215,6 +244,16 @@ private fun encodeRecords(records: Map<String, List<Entry>>): String = JSONObjec
         })
     }
 }.toString()
+
+private fun decodeProgress(notes: JSONArray?): List<ProgressNote> {
+    if (notes == null) return emptyList()
+    return (0 until notes.length()).mapNotNull { index ->
+        val note = notes.optJSONObject(index) ?: return@mapNotNull null
+        val day = parseDay(note.stringOrNull("day")) ?: return@mapNotNull null
+        val text = note.stringOrNull("text")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        ProgressNote(day, text)
+    }.distinctBy { it.day }
+}
 
 private fun decodeAvatars(value: String): Avatars {
     if (value.startsWith(AVATAR_PREFIX)) return Avatars(listOf(AvatarPhoto("original-photo", value)), "original-photo")

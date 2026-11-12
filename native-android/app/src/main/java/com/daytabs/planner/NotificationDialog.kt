@@ -56,12 +56,18 @@ internal fun NotificationDialog(
     val palette = colors
     val pending = state.todos(today).count { !it.completed }
     val deadlines = goalMessage(state.goals, today)
+    val progress = state.goals.awaitingProgress(today)
     var preferencesOpen by rememberSaveable { mutableStateOf(false) }
     KaizenDialog("Notifications", onClose) {
         DialogTitle("Notifications", "Close notifications", onClose = onClose)
         if (pending > 0) Notice("Unfinished to-dos", todoMessage(pending), "check-square", palette.remaining) { onOpen(Tab.TODOS) }
         if (deadlines.isNotEmpty()) Notice("Goal deadlines", deadlines, "flag", palette.goal) { onOpen(Tab.GOALS) }
-        if (pending == 0 && deadlines.isEmpty()) Copy("You’re all caught up.", Modifier.padding(bottom = 8.dp), color = palette.secondary)
+        if (progress > 0 && state.reminders.progress) {
+            Notice("Daily goal progress notes", progressMessage(progress), "edit-2", palette.goal) { onOpen(Tab.GOALS) }
+        }
+        if (pending == 0 && deadlines.isEmpty() && (progress == 0 || !state.reminders.progress)) {
+            Copy("You’re all caught up.", Modifier.padding(bottom = 8.dp), color = palette.secondary)
+        }
         Action(if (preferencesOpen) "Hide reminder preferences" else "Manage reminders") { preferencesOpen = !preferencesOpen }
         if (preferencesOpen) ReminderSettings(state.reminders, store, syncError, foreground)
     }
@@ -90,7 +96,7 @@ private fun Notice(title: String, body: String, icon: String, tone: Color, onCli
 }
 
 @Composable
-private fun ReminderSettings(
+internal fun ReminderSettings(
     preferences: ReminderPreferences,
     store: PlannerStore,
     syncError: Boolean,
@@ -112,11 +118,7 @@ private fun ReminderSettings(
             try {
                 withContext(Dispatchers.IO) {
                     store.update {
-                        val prefs = when (kind) {
-                            ReminderKind.TODOS -> it.reminders.copy(todos = value)
-                            ReminderKind.GOALS -> it.reminders.copy(goals = value)
-                        }
-                        it.copy(reminders = prefs)
+                        it.copy(reminders = kind.set(it.reminders, value))
                     }
                 }
             } catch (failure: Exception) {
@@ -157,12 +159,25 @@ private fun ReminderSettings(
 
     Panel(Modifier.fillMaxWidth()) {
         Column {
-            ReminderToggle("Pending to-dos", "7 PM when today’s list has unfinished items.", preferences.todos, !busy && pendingKind == null) {
-                change(ReminderKind.TODOS, it)
+            ReminderKind.entries.forEachIndexed { index, kind ->
+                if (index > 0) Rule()
+                ReminderToggle(kind.setting, kind.description, kind.enabled(preferences), !busy && pendingKind == null) {
+                    change(kind, it)
+                }
             }
-            Rule()
-            ReminderToggle("Goal deadlines", "9 AM the day before and on the finish date.", preferences.goals, !busy && pendingKind == null) {
-                change(ReminderKind.GOALS, it)
+        }
+    }
+    if (preferences.todoDeadlines && permissionGranted && Build.VERSION.SDK_INT >= 31) {
+        val exact = remember(foreground, preferences.todoDeadlines) { DeviceReminders.canScheduleExact(context) }
+        if (!exact) {
+            Copy("Android may delay deadline alerts. Allow alarms and reminders for precise timing.",
+                size = 14, lineHeight = 19, color = colors.secondary)
+            Action("Allow precise deadline alerts", icon = "clock") {
+                val intent = Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                    .setData(android.net.Uri.parse("package:${context.packageName}"))
+                runCatching { context.startActivity(intent) }.onFailure {
+                    error = "Open Alarms & reminders in Android Settings to allow precise alerts."
+                }
             }
         }
     }

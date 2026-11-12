@@ -47,7 +47,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-internal fun ColumnScope.Settings(state: PlannerState, store: PlannerStore, reset: Int) {
+internal fun ColumnScope.Settings(
+    state: PlannerState,
+    store: PlannerStore,
+    reset: Int,
+    foreground: Int,
+    reminderError: Boolean,
+) {
     val palette = colors
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -118,6 +124,10 @@ internal fun ColumnScope.Settings(state: PlannerState, store: PlannerStore, rese
                     }
                 }
             }
+        }
+        Copy("Notifications", Modifier.padding(top = 10.dp), size = 18, lineHeight = 22, weight = FontWeight.ExtraBold)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            ReminderSettings(state.reminders, store, reminderError, foreground)
         }
         Copy("Planner data", Modifier.padding(top = 10.dp), size = 18, lineHeight = 22, weight = FontWeight.ExtraBold)
         Panel(Modifier.fillMaxWidth()) {

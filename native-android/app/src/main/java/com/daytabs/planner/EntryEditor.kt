@@ -1,5 +1,8 @@
 package com.daytabs.planner
 
+import android.app.TimePickerDialog
+import android.content.Context
+import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
@@ -39,7 +43,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.util.Date
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,6 +62,12 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
     val noun = if (isGoal) "goal" else "to-do"
     var title by rememberSaveable { mutableStateOf(entry?.title.orEmpty()) }
     var note by rememberSaveable { mutableStateOf(entry?.note.orEmpty()) }
+    val progressDay = remember { LocalDate.now() }
+    val progressNote = entry?.progress?.firstOrNull { it.day == progressDay }
+    var progressOpen by rememberSaveable { mutableStateOf(false) }
+    var progressText by rememberSaveable { mutableStateOf(progressNote?.text.orEmpty()) }
+    var deadline by rememberSaveable { mutableStateOf(entry?.deadline) }
+    var relativeHours by rememberSaveable { mutableStateOf<Int?>(null) }
     var timing by rememberSaveable { mutableStateOf(Timing.RANGE) }
     var duration by rememberSaveable { mutableStateOf("1") }
     var start by remember { mutableStateOf(entry?.schedule?.start ?: request.day) }
@@ -68,8 +82,13 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
     val focus = LocalFocusManager.current
 
     fun close() {
-        if (picking != null) picking = null
-        else if (!busy) onClose()
+        if (!busy) onClose()
+    }
+
+    fun openCalendar(date: PickDate) {
+        keyboard?.hide()
+        focus.clearFocus()
+        picking = date
     }
 
     fun submit(deleting: Boolean = false) {
@@ -82,6 +101,17 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
             error = "Enter a positive whole number of days that fits on the calendar."
             return
         }
+        val now = System.currentTimeMillis()
+        val dueAt = relativeHours?.let { now + it * 3_600_000L } ?: deadline
+        if (!deleting && !isGoal && dueAt != null && dueAt != entry?.deadline && dueAt <= now) {
+            error = "Choose a deadline in the future."
+            return
+        }
+        val cleanTitle = title.trim()
+        val cleanNote = if (isGoal) entry?.note else note.trim().ifEmpty { null }
+        val schedule = if (isGoal && !deleting) Schedule(start, requireNotNull(finish)) else null
+        val progressEdit = if (isGoal && progressOpen) progressText.trim() else null
+
         keyboard?.hide()
         focus.clearFocus()
         error = ""
@@ -93,17 +123,23 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                         if (deleting) {
                             entries.filterNot { it.id == entry?.id }
                         } else {
-                            val schedule = if (isGoal) Schedule(start, requireNotNull(finish)) else null
-                            val cleanNote = if (isGoal) null else note.trim().ifEmpty { null }
-                            val cleanTitle = title.trim()
+                            fun edit(current: Entry): Entry {
+                                val progress = if (progressEdit == null) current.progress else {
+                                    current.progress.filterNot { it.day == progressDay } +
+                                        listOfNotNull(progressEdit.takeIf { it.isNotEmpty() }?.let {
+                                            ProgressNote(progressDay, it)
+                                        })
+                                }
+                                return current.copy(
+                                    title = cleanTitle, note = cleanNote, schedule = schedule,
+                                    deadline = dueAt, progress = progress,
+                                )
+                            }
                             if (entry == null) {
-                                entries + Entry(title = cleanTitle, note = cleanNote, schedule = schedule)
+                                entries + edit(Entry(title = cleanTitle))
                             } else {
                                 check(entries.any { it.id == entry.id }) { "This item was deleted." }
-                                entries.map {
-                                    if (it.id == entry.id) it.copy(title = cleanTitle, note = cleanNote, schedule = schedule)
-                                    else it
-                                }
+                                entries.map { if (it.id == entry.id) edit(it) else it }
                             }
                         }
                     }
@@ -126,8 +162,7 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
     Box(Modifier.fillMaxSize().background(colors.background).windowInsetsPadding(WindowInsets.safeDrawing).imePadding(),
         contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 560.dp).fillMaxSize().padding(horizontal = 16.dp)) {
-            val pick = picking
-            val heading = pick?.label ?: when {
+            val heading = when {
                 request.readOnly -> "To-do"
                 confirm -> "Delete $noun?"
                 entry == null -> "Add $noun"
@@ -136,98 +171,102 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Heading(heading, Modifier.weight(1f))
-                IconButton("x", if (pick == null) "Close" else "Close calendar", enabled = !busy, onClick = ::close)
+                IconButton("x", "Close", enabled = !busy, onClick = ::close)
             }
-            if (pick != null) {
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 20.dp)) {
-                    Panel(Modifier.fillMaxWidth()) {
-                        Box(Modifier.padding(start = 6.dp, end = 6.dp, bottom = 6.dp)) {
-                            CalendarGrid(
-                                selected = if (pick == PickDate.START) start else end,
-                                firstDay = if (pick == PickDate.START) firstCalendarDay else start,
-                            ) { day ->
-                                if (pick == PickDate.START) {
-                                    start = day
-                                    if (day > end) end = day
-                                } else {
-                                    end = day
-                                }
-                                error = ""
-                                picking = null
-                            }
-                        }
+            Column(
+                Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                if (!isGoal) EditorDate(dayLabel(request.day))
+                when {
+                    request.readOnly -> {
+                        Copy(title, size = 23, lineHeight = 29, weight = FontWeight.Bold)
+                        Copy(if (entry?.completed == true) "Completed" else "Unfinished", color = colors.secondary)
+                        if (note.isNotEmpty()) Copy(note)
+                        entry?.deadline?.let { EditorDate("Due ${deadlineLabel(LocalContext.current, it)}") }
                     }
-                }
-            } else {
-                Column(
-                    Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                ) {
-                    if (!isGoal) EditorDate(dayLabel(request.day))
-                    when {
-                        request.readOnly -> {
-                            Copy(title, size = 23, lineHeight = 29, weight = FontWeight.Bold)
-                            Copy(if (entry?.completed == true) "Completed" else "Unfinished", color = colors.secondary)
-                            if (note.isNotEmpty()) Copy(note)
-                        }
-                        confirm -> Copy("“${entry?.title ?: title}” will be deleted.")
-                        else -> {
-                            Field("Title", title, { title = it }, 160, enabled = !busy)
-                            if (isGoal) {
-                                Panel(Modifier.fillMaxWidth()) {
-                                    Row(Modifier.fillMaxWidth().selectableGroup()) {
-                                        Timing.entries.forEach { option ->
-                                            val active = timing == option
-                                            Box(Modifier.weight(1f).heightIn(min = 44.dp)
-                                                .background(if (active) colors.date else colors.surface)
-                                                .selectable(active, enabled = !busy, role = Role.RadioButton) {
-                                                    if (option != timing) {
-                                                        if (option == Timing.DAYS) duration = calendarDays(start, end).toString()
-                                                        else end = finish ?: end
-                                                        timing = option
-                                                        error = ""
-                                                    }
-                                                }.padding(7.dp), contentAlignment = Alignment.Center) {
-                                                Copy(option.label, weight = FontWeight.Bold, align = TextAlign.Center)
-                                            }
+                    confirm -> Copy("“${entry?.title ?: title}” will be deleted.")
+                    else -> {
+                        Field("Title", title, { title = it }, 160, enabled = !busy)
+                        if (isGoal) {
+                            GoalProgress(entry?.progress.orEmpty(), progressDay, progressOpen, progressText,
+                                { progressOpen = true }, { progressText = it }, !busy)
+                            Panel(Modifier.fillMaxWidth()) {
+                                Row(Modifier.fillMaxWidth().selectableGroup()) {
+                                    Timing.entries.forEach { option ->
+                                        val active = timing == option
+                                        Box(Modifier.weight(1f).heightIn(min = 44.dp)
+                                            .background(if (active) colors.date else colors.surface)
+                                            .selectable(active, enabled = !busy, role = Role.RadioButton) {
+                                                if (option != timing) {
+                                                    if (option == Timing.DAYS) duration = calendarDays(start, end).toString()
+                                                    else end = finish ?: end
+                                                    timing = option
+                                                    error = ""
+                                                }
+                                            }.padding(7.dp), contentAlignment = Alignment.Center) {
+                                            Copy(option.label, weight = FontWeight.Bold, align = TextAlign.Center)
                                         }
                                     }
                                 }
-                                DateField(PickDate.START, start, !busy) { picking = PickDate.START }
-                                if (timing == Timing.RANGE) {
-                                    DateField(PickDate.FINISH, end, !busy) { picking = PickDate.FINISH }
-                                } else {
-                                    Field("Number of days", duration, { duration = it }, 7, numeric = true, enabled = !busy)
-                                }
-                                if (finish != null) {
-                                    val days = calendarDays(start, finish)
-                                    EditorDate(if (timing == Timing.DAYS) "Finishes ${fullDayLabel(finish)}"
-                                        else "$days ${if (days == 1L) "day" else "days"}")
-                                }
+                            }
+                            DateField(PickDate.START, start, !busy) { openCalendar(PickDate.START) }
+                            if (timing == Timing.RANGE) {
+                                DateField(PickDate.FINISH, end, !busy) { openCalendar(PickDate.FINISH) }
                             } else {
-                                Field("Note (optional)", note, { note = it }, 4000, multiline = true, enabled = !busy)
+                                Field("Number of days", duration, { duration = it }, 7, numeric = true, enabled = !busy)
                             }
-                            if (entry != null) Action("Delete $noun", icon = "trash-2", danger = true, enabled = !busy) {
-                                keyboard?.hide()
-                                focus.clearFocus()
-                                error = ""
-                                confirm = true
+                            if (finish != null) {
+                                val days = calendarDays(start, finish)
+                                EditorDate(if (timing == Timing.DAYS) "Finishes ${fullDayLabel(finish)}"
+                                    else "$days ${if (days == 1L) "day" else "days"}")
                             }
-                        }
-                    }
-                    Message(error, error = true)
-                }
-                if (!request.readOnly) {
-                    Column(Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        if (confirm) {
-                            Action("Cancel", enabled = !busy) { error = ""; confirm = false }
-                            Action(if (busy) "Deleting…" else "Delete $noun", danger = true, enabled = !busy) { submit(true) }
                         } else {
-                            Action(if (busy) "Saving…" else "Save $noun", primary = true, enabled = !busy) { submit() }
+                            Field("Note (optional)", note, { note = it }, 4000, multiline = true, enabled = !busy)
+                            TodoDeadline(deadline, relativeHours, !busy, onChange = { at, hours ->
+                                deadline = at
+                                relativeHours = hours
+                                error = ""
+                            })
+                        }
+                        if (entry != null) Action("Delete $noun", icon = "trash-2", danger = true, enabled = !busy) {
+                            keyboard?.hide()
+                            focus.clearFocus()
+                            error = ""
+                            confirm = true
                         }
                     }
                 }
+                Message(error, error = true)
+            }
+            if (!request.readOnly) {
+                Column(Modifier.fillMaxWidth().padding(top = 9.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (confirm) {
+                        Action("Cancel", enabled = !busy) { error = ""; confirm = false }
+                        Action(if (busy) "Deleting…" else "Delete $noun", danger = true, enabled = !busy) { submit(true) }
+                    } else {
+                        Action(if (busy) "Saving…" else "Save $noun", primary = true, enabled = !busy) { submit() }
+                    }
+                }
+            }
+        }
+    }
+    picking?.let { pick ->
+        KaizenDialog(pick.label, { picking = null }) {
+            DialogTitle(pick.label, "Close calendar", 26) { picking = null }
+            CalendarGrid(
+                selected = if (pick == PickDate.START) start else end,
+                firstDay = if (pick == PickDate.START) firstCalendarDay else start,
+            ) { day ->
+                if (pick == PickDate.START) {
+                    start = day
+                    if (day > end) end = day
+                } else {
+                    end = day
+                }
+                error = ""
+                picking = null
             }
         }
     }
@@ -260,46 +299,163 @@ internal fun CalendarGrid(
     var monthKey by rememberSaveable(selected.toString()) { mutableStateOf(selected.withDayOfMonth(1).toString()) }
     val month = LocalDate.parse(monthKey)
     val palette = colors
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        IconButton("chevron-left", "Previous month", enabled = month > firstDay.withDayOfMonth(1)) {
-            monthKey = month.minusMonths(1).toString()
-        }
-        Copy(monthLabel(month), Modifier.weight(1f), weight = FontWeight.Bold, align = TextAlign.Center)
-        IconButton("chevron-right", "Next month", enabled = month < lastDay.withDayOfMonth(1)) {
-            monthKey = month.plusMonths(1).toString()
-        }
-    }
-    Row(Modifier.fillMaxWidth()) {
-        for (day in listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")) {
-            Box(Modifier.weight(1f).heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
-                Copy(day, size = 12, color = palette.secondary)
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            IconButton("chevron-left", "Previous month", enabled = month > firstDay.withDayOfMonth(1)) {
+                monthKey = month.minusMonths(1).toString()
+            }
+            Copy(monthLabel(month), Modifier.weight(1f), weight = FontWeight.Bold, align = TextAlign.Center)
+            IconButton("chevron-right", "Next month", enabled = month < lastDay.withDayOfMonth(1)) {
+                monthKey = month.plusMonths(1).toString()
             }
         }
-    }
-    val offset = month.dayOfWeek.value - 1
-    val weeks = (offset + month.lengthOfMonth() + 6) / 7
-    for (week in 0 until weeks) {
         Row(Modifier.fillMaxWidth()) {
-            for (weekday in 0..6) {
-                val index = week * 7 + weekday - offset + 1
-                val cell = Modifier.weight(1f).heightIn(min = 48.dp)
-                if (index !in 1..month.lengthOfMonth()) {
-                    Box(cell)
-                } else {
-                    val day = month.withDayOfMonth(index)
-                    val active = day == selected
-                    val enabled = day in firstDay..lastDay
-                    val shape = RoundedCornerShape(6.dp)
-                    Box(cell.alpha(if (enabled) 1f else 0.38f)
-                        .background(if (active) palette.date else androidx.compose.ui.graphics.Color.Transparent, shape)
-                        .border(1.dp, if (active) palette.ink else androidx.compose.ui.graphics.Color.Transparent, shape)
-                        .selectable(active, enabled = enabled, role = Role.Button) { onSelect(day) }
-                        .semantics { contentDescription = accessibleDayLabel(day) },
-                        contentAlignment = Alignment.Center) {
-                        Copy(index.toString())
+            for (day in listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")) {
+                Box(Modifier.weight(1f).heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+                    Copy(day, size = 12, color = palette.secondary)
+                }
+            }
+        }
+        val offset = month.dayOfWeek.value - 1
+        val weeks = (offset + month.lengthOfMonth() + 6) / 7
+        for (week in 0 until weeks) {
+            Row(Modifier.fillMaxWidth()) {
+                for (weekday in 0..6) {
+                    val index = week * 7 + weekday - offset + 1
+                    val cell = Modifier.weight(1f).heightIn(min = 48.dp)
+                    if (index !in 1..month.lengthOfMonth()) {
+                        Box(cell)
+                    } else {
+                        val day = month.withDayOfMonth(index)
+                        val active = day == selected
+                        val enabled = day in firstDay..lastDay
+                        val shape = RoundedCornerShape(6.dp)
+                        Box(cell.alpha(if (enabled) 1f else 0.38f)
+                            .background(if (active) palette.date else androidx.compose.ui.graphics.Color.Transparent, shape)
+                            .border(1.dp, if (active) palette.ink else androidx.compose.ui.graphics.Color.Transparent, shape)
+                            .selectable(active, enabled = enabled, role = Role.Button) { onSelect(day) }
+                            .semantics { contentDescription = accessibleDayLabel(day) },
+                            contentAlignment = Alignment.Center) {
+                            Copy(index.toString())
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun GoalProgress(
+    notes: List<ProgressNote>,
+    today: LocalDate,
+    editing: Boolean,
+    text: String,
+    onEdit: () -> Unit,
+    onChange: (String) -> Unit,
+    enabled: Boolean,
+) {
+    val current = notes.firstOrNull { it.day == today }
+    val previous = remember(notes, today) { notes.filterNot { it.day == today }.sortedByDescending { it.day } }
+    var showPrevious by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Copy("Daily progress notes", size = 18, weight = FontWeight.Bold)
+        if (editing) {
+            Copy(dayLabel(today), size = 14, color = colors.secondary)
+            Field("Today’s progress note", text, onChange, 4000, multiline = true, enabled = enabled)
+        } else {
+            current?.let {
+                Copy(it.text, color = colors.secondary, maxLines = 3)
+            }
+            Action(
+                if (current == null) "Add today’s progress note" else "Edit today’s progress note",
+                icon = if (current == null) "plus" else "edit-2",
+                enabled = enabled,
+                onClick = onEdit,
+            )
+        }
+        if (previous.isNotEmpty()) {
+            Action(if (showPrevious) "Hide past notes" else "Show past notes (${previous.size})") {
+                showPrevious = !showPrevious
+            }
+            if (showPrevious) {
+                Panel(Modifier.fillMaxWidth()) {
+                    Column {
+                        previous.forEachIndexed { index, note ->
+                            if (index > 0) Rule()
+                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Copy(fullDayLabel(note.day), size = 14, weight = FontWeight.Bold)
+                                Copy(note.text)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoDeadline(
+    deadline: Long?,
+    relativeHours: Int?,
+    enabled: Boolean,
+    onChange: (Long?, Int?) -> Unit,
+) {
+    val context = LocalContext.current
+    val dark = colors == darkPalette
+    val label = when {
+        relativeHours != null -> "Due $relativeHours hours after saving"
+        deadline != null -> "Due ${deadlineLabel(context, deadline)}"
+        else -> "Deadline (optional)"
+    }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Copy(label, weight = FontWeight.Bold)
+        if (expanded) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(2, 3).forEach { hours ->
+                    Action("In $hours hours", Modifier.weight(1f), primary = relativeHours == hours, enabled = enabled) {
+                        onChange(null, hours)
+                    }
+                }
+            }
+            Action("Choose a time", icon = "clock", enabled = enabled) {
+                val zone = ZoneId.systemDefault()
+                val initial = deadline?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalTime() }
+                    ?: LocalTime.now(zone).plusHours(1)
+                val theme = if (dark) android.R.style.Theme_Material_Dialog_Alert
+                    else android.R.style.Theme_Material_Light_Dialog_Alert
+                TimePickerDialog(context, theme, { _, hour, minute ->
+                    val now = Instant.now()
+                    val localDate = now.atZone(zone).toLocalDate()
+                    val time = LocalTime.of(hour, minute)
+                    val sameDay = localDate.atTime(time).atZone(zone).toInstant()
+                    val next = if (sameDay > now) sameDay
+                        else localDate.plusDays(1).atTime(time).atZone(zone).toInstant()
+                    onChange(next.toEpochMilli(), null)
+                }, initial.hour, initial.minute, DateFormat.is24HourFormat(context)).show()
+            }
+            if (deadline != null || relativeHours != null) {
+                Action("Remove deadline", enabled = enabled) { onChange(null, null) }
+            }
+            Copy("Turn on To-do deadlines in Settings to get an alert if it’s still unfinished.",
+                size = 14, lineHeight = 19, color = colors.secondary)
+        } else {
+            Action(if (deadline == null && relativeHours == null) "Add deadline" else "Change deadline",
+                icon = "clock", enabled = enabled) { expanded = true }
+        }
+    }
+}
+
+internal fun deadlineLabel(context: Context, deadline: Long): String {
+    val zone = ZoneId.systemDefault()
+    val day = Instant.ofEpochMilli(deadline).atZone(zone).toLocalDate()
+    val today = LocalDate.now(zone)
+    val label = when (day) {
+        today -> "today"
+        today.plusDays(1) -> "tomorrow"
+        else -> fullDayLabel(day)
+    }
+    return "$label at ${DateFormat.getTimeFormat(context).format(Date(deadline))}"
 }

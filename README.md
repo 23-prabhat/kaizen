@@ -4,7 +4,9 @@ Kaizen is a personal planner for Android and iOS. It opens straight to the dashb
 
 ## Install Kaizen on Android
 
-Download `Kaizen-0.2.0.apk` from the [Kaizen Android release](https://github.com/23-prabhat/kaizen/releases/latest) on a device running Android 7.0 or later. Open the APK and follow Android’s install prompts. Install it over the signed 0.1.0 release to bring your existing planner and preferences forward. A fresh install opens an empty, offline planner without an account. Open the bell on the dashboard to enable reminders.
+Download `Kaizen-0.3.0.apk` from the [Kaizen Android release](https://github.com/23-prabhat/kaizen/releases/latest) on a device running Android 7.0 or later. Open the APK and follow Android’s install prompts. Install it over your existing signed GitHub release to keep your planner and preferences. A fresh install opens an empty, offline planner without an account.
+
+Tap a goal’s start or finish date to open its calendar. In a goal, use **Daily progress notes** to write or revisit dated updates. A to-do deadline can be two or three hours after saving or a time you pick. Use **Settings → Notifications** to enable individual reminders, grant notification permission, and allow precise to-do deadline alerts on Android versions that offer that setting.
 
 ## Build the Kotlin Android app
 
