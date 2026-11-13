@@ -20,13 +20,12 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -46,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
         openReminder(intent)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, darkPalette.surface.toArgb()),
         )
         if (Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = false
         val store = PlannerStore(applicationContext)
@@ -103,7 +103,7 @@ class MainActivity : ComponentActivity() {
             SideEffect {
                 WindowCompat.getInsetsController(window, window.decorView).apply {
                     isAppearanceLightStatusBars = !dark
-                    isAppearanceLightNavigationBars = true
+                    isAppearanceLightNavigationBars = !dark
                 }
             }
             CompositionLocalProvider(LocalPalette provides if (dark) darkPalette else lightPalette) {
@@ -249,8 +249,8 @@ private fun Kaizen(
 @Composable
 private fun BottomTabs(tab: Tab, onSelect: (Tab) -> Unit) {
     val palette = colors
-    Column(Modifier.fillMaxWidth().background(palette.surface)) {
-        Rule(color = palette.ink, thickness = 2.dp)
+    Column(Modifier.fillMaxWidth().background(palette.surface).navigationBarsPadding()) {
+        Rule()
         Row(
             Modifier.fillMaxWidth().heightIn(min = 63.dp).padding(horizontal = 6.dp, vertical = 4.dp).selectableGroup(),
             horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.Top,
@@ -276,7 +276,5 @@ private fun BottomTabs(tab: Tab, onSelect: (Tab) -> Unit) {
                 }
             }
         }
-        Box(Modifier.fillMaxWidth().windowInsetsBottomHeight(WindowInsets.navigationBars)
-            .background(if (palette == darkPalette) Color(0xFFEBEAEB) else Color.White))
     }
 }
