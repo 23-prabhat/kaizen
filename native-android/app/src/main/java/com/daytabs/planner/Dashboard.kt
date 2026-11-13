@@ -122,7 +122,9 @@ internal fun ColumnScope.Dashboard(
                                 Glyph(if (goal.completed) "check-circle" else "flag", 18)
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Copy(goal.title, size = 14, weight = FontWeight.Bold)
-                                    Copy(requireNotNull(goal.schedule).label(), size = 13, lineHeight = 17, color = palette.secondary)
+                                    val dates = requireNotNull(goal.schedule).label()
+                                    Copy(listOfNotNull(goal.goalTag?.label, dates).joinToString(" · "),
+                                        size = 13, lineHeight = 17, color = palette.secondary)
                                 }
                             }
                         }

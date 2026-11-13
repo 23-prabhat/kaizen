@@ -152,7 +152,13 @@ internal enum class Tab(val label: String, val icon: String) {
     HISTORY("History", "clock"), SETTINGS("Settings", "settings")
 }
 
-internal data class EditRequest(val key: String, val day: LocalDate, val entry: Entry? = null, val readOnly: Boolean = false)
+internal data class EditRequest(
+    val key: String,
+    val day: LocalDate,
+    val entry: Entry? = null,
+    val readOnly: Boolean = false,
+    val draftTitle: String = "",
+)
 
 @Composable
 private fun Kaizen(
@@ -196,7 +202,12 @@ private fun Kaizen(
     val edit = editor
     BackHandler(edit == null && tab != Tab.DASHBOARD && !notifications && !widget) { tab = Tab.DASHBOARD }
     if (edit != null) {
-        EntryEditor(edit, store) { editor = null }
+        androidx.compose.runtime.key(edit) {
+            EntryEditor(edit, store, onClose = { editor = null }, onStartGoal = { title ->
+                tab = Tab.GOALS
+                editor = EditRequest(GOALS_KEY, edit.day.coerceAtLeast(today), draftTitle = title)
+            })
+        }
     } else {
         Column(Modifier.fillMaxSize().background(colors.background)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {

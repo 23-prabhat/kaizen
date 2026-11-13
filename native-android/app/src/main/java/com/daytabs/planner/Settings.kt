@@ -147,14 +147,14 @@ internal fun ColumnScope.Settings(
         Panel(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Copy("Saved on this device", weight = FontWeight.SemiBold)
-                Copy("Plan multiple days from an Excel (.xlsx) or CSV file. Use the columns date, todo work, and deadline. Leave the deadline blank for an all-day to-do.",
+                Copy("Import dated to-dos from Excel (.xlsx), CSV, or JSON. Use date, todo work, and deadline. Enter a time like 17:30 or a duration like 1hr 30 min. Leave the deadline blank for an all-day to-do.",
                     size = 14, lineHeight = 19, color = palette.secondary)
                 Action("Import Excel or CSV", icon = "download", enabled = !busy) {
                     status = ""
                     error = ""
                     todoFilePicker.launch(arrayOf("*/*"))
                 }
-                Action("Import Kaizen JSON report", enabled = !busy) {
+                Action("Import JSON report", enabled = !busy) {
                     status = ""
                     error = ""
                     reportPicker.launch(arrayOf("*/*"))

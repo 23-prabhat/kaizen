@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,11 +21,14 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -56,18 +61,20 @@ private enum class Timing(val label: String) { RANGE("Date range"), DAYS("Number
 private enum class PickDate(val label: String) { START("Start date"), FINISH("Finish date") }
 
 @Composable
-internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () -> Unit) {
+internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () -> Unit, onStartGoal: (String) -> Unit) {
     val entry = request.entry
     val isGoal = request.key == GOALS_KEY
     val noun = if (isGoal) "goal" else "to-do"
-    var title by rememberSaveable { mutableStateOf(entry?.title.orEmpty()) }
+    var title by rememberSaveable { mutableStateOf(entry?.title ?: request.draftTitle) }
     var note by rememberSaveable { mutableStateOf(entry?.note.orEmpty()) }
     val progressDay = remember { LocalDate.now() }
     val progressNote = entry?.progress?.firstOrNull { it.day == progressDay }
     var progressOpen by rememberSaveable { mutableStateOf(false) }
     var progressText by rememberSaveable { mutableStateOf(progressNote?.text.orEmpty()) }
     var deadline by rememberSaveable { mutableStateOf(entry?.deadline) }
-    var relativeHours by rememberSaveable { mutableStateOf<Int?>(null) }
+    var hours by rememberSaveable { mutableStateOf("") }
+    var minutes by rememberSaveable { mutableStateOf("") }
+    var goalTag by rememberSaveable { mutableStateOf(entry?.goalTag) }
     var timing by rememberSaveable { mutableStateOf(Timing.RANGE) }
     var duration by rememberSaveable { mutableStateOf("1") }
     var start by remember { mutableStateOf(entry?.schedule?.start ?: request.day) }
@@ -75,6 +82,7 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
     val finish = if (timing == Timing.DAYS) finishForDuration(start, duration) else end
     var picking by rememberSaveable { mutableStateOf<PickDate?>(null) }
     var error by rememberSaveable { mutableStateOf("") }
+    var deadlineError by rememberSaveable { mutableStateOf("") }
     var confirm by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -101,10 +109,31 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
             error = "Enter a positive whole number of days that fits on the calendar."
             return
         }
-        val now = System.currentTimeMillis()
-        val dueAt = relativeHours?.let { now + it * 3_600_000L } ?: deadline
-        if (!deleting && !isGoal && dueAt != null && dueAt != entry?.deadline && dueAt <= now) {
-            error = "Choose a deadline in the future."
+        val now = Instant.now()
+        val window = DeadlineWindow(request.day, now, ZoneId.systemDefault())
+        val hasDuration = hours.isNotEmpty() || minutes.isNotEmpty()
+        val dueAt = try {
+            when {
+                deleting || isGoal -> null
+                hasDuration -> window.afterMinutes(deadlineDuration(
+                    if (hours.isEmpty()) 0 else hours.toIntOrNull(),
+                    if (minutes.isEmpty()) 0 else minutes.toIntOrNull(),
+                )).also {
+                    require(it > now) { "Choose a deadline on a current or future date." }
+                }.toEpochMilli()
+                else -> deadline?.also { selected ->
+                    if (selected != entry?.deadline) {
+                        val instant = Instant.ofEpochMilli(selected)
+                        require(window.contains(instant)) { TODO_DAY_LIMIT }
+                        require(instant > now) { "Choose a time later today or plan this to-do on another date." }
+                    }
+                }
+            }
+        } catch (failure: IllegalArgumentException) {
+            keyboard?.hide()
+            focus.clearFocus()
+            error = ""
+            deadlineError = failure.message.orEmpty()
             return
         }
         val cleanTitle = title.trim()
@@ -113,13 +142,14 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
         val progressEdit = if (isGoal && progressOpen) progressText.trim() else null
         val deadlineStart = when {
             dueAt == null -> null
-            dueAt == entry?.deadline -> entry.deadlineStart
-            else -> maxOf(now, request.day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
+            !hasDuration && dueAt == entry?.deadline -> entry.deadlineStart
+            else -> window.startFor(Instant.ofEpochMilli(dueAt))
         }
 
         keyboard?.hide()
         focus.clearFocus()
         error = ""
+        deadlineError = ""
         busy = true
         scope.launch {
             try {
@@ -137,7 +167,7 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                                 }
                                 return current.copy(
                                     title = cleanTitle, note = cleanNote, schedule = schedule,
-                                    deadline = dueAt, deadlineStart = deadlineStart, progress = progress,
+                                    deadline = dueAt, deadlineStart = deadlineStart, progress = progress, goalTag = goalTag,
                                 )
                             }
                             if (entry == null) {
@@ -194,6 +224,7 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                     else -> {
                         Field("Title", title, { title = it }, 160, enabled = !busy)
                         if (isGoal) {
+                            GoalTagPicker(goalTag, !busy) { goalTag = it }
                             GoalProgress(entry?.progress.orEmpty(), progressDay, progressOpen, progressText,
                                 { progressOpen = true }, { progressText = it }, !busy)
                             Panel(Modifier.fillMaxWidth()) {
@@ -228,11 +259,24 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                             }
                         } else {
                             Field("Note (optional)", note, { note = it }, 4000, multiline = true, enabled = !busy)
-                            TodoDeadline(request.day, deadline, relativeHours, !busy, onChange = { at, hours ->
-                                deadline = at
-                                relativeHours = hours
-                                error = ""
-                            })
+                            TodoDeadline(
+                                request.day, deadline, hours, minutes, deadlineError, !busy,
+                                onHours = {
+                                    hours = it
+                                    deadlineError = ""
+                                },
+                                onMinutes = {
+                                    minutes = it
+                                    deadlineError = ""
+                                },
+                                onClock = {
+                                    deadline = it
+                                    hours = ""
+                                    minutes = ""
+                                    deadlineError = ""
+                                },
+                                onStartGoal = { onStartGoal(title.trim()) },
+                            )
                         }
                         if (entry != null) Action("Delete $noun", icon = "trash-2", danger = true, enabled = !busy) {
                             keyboard?.hide()
@@ -401,58 +445,81 @@ private fun GoalProgress(
 }
 
 @Composable
+private fun GoalTagPicker(selected: GoalTag?, enabled: Boolean, onSelect: (GoalTag?) -> Unit) {
+    val palette = colors
+    val shape = RoundedCornerShape(6.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Copy("Goal tag", weight = FontWeight.Bold)
+        FlowRow(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (tag in listOf(null) + GoalTag.entries) {
+                val active = selected == tag
+                Box(Modifier.heightIn(min = 48.dp).clip(shape)
+                    .background(if (active) palette.date else palette.surface)
+                    .border(if (active) 2.dp else 1.5.dp, palette.ink, shape)
+                    .selectable(active, enabled = enabled, role = Role.RadioButton) { onSelect(tag) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp), contentAlignment = Alignment.Center) {
+                    Copy(tag?.label ?: "No tag", size = 14, weight = if (active) FontWeight.Bold else FontWeight.Normal)
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun TodoDeadline(
     plannedDay: LocalDate,
     deadline: Long?,
-    relativeHours: Int?,
+    hours: String,
+    minutes: String,
+    error: String,
     enabled: Boolean,
-    onChange: (Long?, Int?) -> Unit,
+    onHours: (String) -> Unit,
+    onMinutes: (String) -> Unit,
+    onClock: (Long?) -> Unit,
+    onStartGoal: () -> Unit,
 ) {
     val context = LocalContext.current
     val dark = colors == darkPalette
     val isToday = plannedDay == LocalDate.now()
-    val label = when {
-        relativeHours != null -> "Due $relativeHours hours after saving"
-        deadline != null -> "Due ${deadlineLabel(context, deadline)}"
-        else -> "Deadline (optional)"
-    }
+    val hasDuration = hours.isNotEmpty() || minutes.isNotEmpty()
+    val recovery = remember { BringIntoViewRequester() }
     var expanded by rememberSaveable { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Copy(label, weight = FontWeight.Bold)
+        Copy("Deadline (optional)", weight = FontWeight.Bold)
+        if (deadline != null && !hasDuration) EditorDate("Due ${deadlineLabel(context, deadline)}")
         if (expanded) {
-            if (isToday) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(2, 3).forEach { hours ->
-                        Action("In $hours hours", Modifier.weight(1f), primary = relativeHours == hours, enabled = enabled) {
-                            onChange(null, hours)
-                        }
+            Copy(if (isToday) "Count from when you save." else "Count from midnight on ${dayLabel(plannedDay)}.",
+                size = 14, lineHeight = 19, color = colors.secondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Field("Hours (0–23)", hours, onHours, 10, numeric = true, enabled = enabled, modifier = Modifier.weight(1f))
+                Field("Minutes (0–59)", minutes, onMinutes, 10, numeric = true, enabled = enabled, modifier = Modifier.weight(1f))
+            }
+            if (error.isNotEmpty()) {
+                Column(Modifier.bringIntoViewRequester(recovery), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Message(error, error = true)
+                    if (error == TODO_DURATION_LIMIT || error == TODO_DAY_LIMIT) {
+                        Action("Add a goal", icon = "flag", enabled = enabled, onClick = onStartGoal)
                     }
                 }
+                LaunchedEffect(error) { recovery.bringIntoView() }
             }
-            Action("Choose a time", icon = "clock", enabled = enabled) {
+            Action("Choose a clock time", icon = "clock", enabled = enabled) {
                 val zone = ZoneId.systemDefault()
                 val initial = deadline?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalTime() }
                     ?: if (isToday) LocalTime.now(zone).plusHours(1) else LocalTime.of(17, 0)
                 val theme = if (dark) android.R.style.Theme_Material_Dialog_Alert
                     else android.R.style.Theme_Material_Light_Dialog_Alert
                 TimePickerDialog(context, theme, { _, hour, minute ->
-                    val now = Instant.now()
-                    val localDate = now.atZone(zone).toLocalDate()
                     val time = LocalTime.of(hour, minute)
-                    val selected = plannedDay.atTime(time).atZone(zone).toInstant()
-                    val next = if (plannedDay == localDate && selected <= now)
-                        localDate.plusDays(1).atTime(time).atZone(zone).toInstant()
-                    else selected
-                    onChange(next.toEpochMilli(), null)
+                    onClock(plannedDay.atTime(time).atZone(zone).toInstant().toEpochMilli())
                 }, initial.hour, initial.minute, DateFormat.is24HourFormat(context)).show()
             }
-            if (deadline != null || relativeHours != null) {
-                Action("Remove deadline", enabled = enabled) { onChange(null, null) }
+            if (deadline != null || hasDuration) {
+                Action("Remove deadline", enabled = enabled) { onClock(null) }
             }
-            Copy("Turn on To-do deadlines in Settings for halfway and deadline alerts.",
-                size = 14, lineHeight = 19, color = colors.secondary)
         } else {
-            Action(if (deadline == null && relativeHours == null) "Add deadline" else "Change deadline",
+            Action(if (deadline == null) "Add deadline" else "Change deadline",
                 icon = "clock", enabled = enabled) { expanded = true }
         }
     }

@@ -6,8 +6,8 @@ Kaizen is an offline-first personal planner for organizing daily tasks, tracking
 
 ## Features
 
-- **Daily planning** — Plan today, tomorrow, or a later date from the To-dos calendar. Add notes and optional deadlines, or import a month’s tasks from Excel or CSV.
-- **Goals and progress** — Set a date range or a duration in days. Open a calendar directly from either date field, and keep a dated progress note for each day.
+- **Daily planning** — Plan today, tomorrow, or a later date. Set a deadline using hours and minutes or a clock time, and import a month’s tasks from Excel, CSV, or JSON.
+- **Goals and progress** — Set a date range or duration in days, add an optional Short term or Long term tag, and keep a dated progress note for each day.
 - **Dashboard and history** — See today’s remaining and completed to-dos, active goals, and a 14-day activity chart. Use History to revisit earlier tasks and their notes.
 - **Local notifications** — Manage pending to-do, to-do halfway and deadline, goal deadline, and daily goal progress reminders independently under **Settings → Notifications**. Android requests notification permission when needed. If available, **Allow precise deadline alerts** enables exact timing for to-do deadlines.
 - **Personalization** — Choose a light, dark, or system theme. Use a fixed avatar or rotate through the built-in mascots and up to four of your own photos. The dashboard shows a daily quote. The **Today’s to-dos** home-screen widget displays a scrollable list of that day’s tasks.
@@ -59,18 +59,30 @@ In the Android app, go to **Settings → Planner data → Import Excel or CSV**.
 
 ```csv
 date,todo work,deadline
-2026-11-16,Solve questions 1–10,17:00
-2026-11-17,Solve questions 11–20,
-2026-11-18,Solve questions 21–30,5:30 PM
+2026-11-16,Solve questions 1–10,4hr
+2026-11-17,Solve questions 11–20,1hr 30 min
+2026-11-18,Solve questions 21–30,30 min
+2026-11-19,Review missed questions,5:30 PM
+2026-11-20,Organize notes,
 ```
 
-Use `YYYY-MM-DD` dates and leave the deadline blank for an all-day task. Excel date and time cells are also supported. The app checks the whole file before saving and skips matching rows on reimport. Each file can contain up to 5,000 to-dos and must be under 2 MB.
+Use `YYYY-MM-DD` dates and leave the deadline blank for an all-day task. Excel date and time cells are also supported. Each file can contain up to 5,000 to-dos and must be under 2 MB. The app checks the whole file before saving and skips matching rows on reimport.
+
+Durations must be at least one minute, with up to 23 hours and 59 minutes, and must end before midnight on the task’s date. For longer plans, create a goal. A duration counts from local midnight for tasks planned ahead and from the time you save or import a task for today. For past tasks imported into History, durations count from midnight on the recorded date.
 
 With **To-do deadlines** enabled in **Settings → Notifications**, timed to-dos can trigger a halfway reminder and a deadline reminder while unfinished. For tasks planned in advance, the time window begins at local midnight on the planned day. For deadlines added on the day itself, it begins when the task is saved or imported.
 
 ### Import a Kaizen JSON report
 
-Use **Settings → Planner data → Import Kaizen JSON report** on Android, or **Import report** in Expo. A report file under 1 MB can include notes and completion status for dated tasks.
+Use **Settings → Planner data → Import JSON report** on Android. JSON files under 1 MB can use the same field names and deadline formats as a spreadsheet.
+
+```json
+[
+  { "date": "2026-11-16", "todo work": "Solve questions 1–10", "deadline": "1hr 30 min" }
+]
+```
+
+Android also supports existing Kaizen report files with `id`, `day`, `title`, `note`, and `done`. The `deadline` field is optional on Android. Use the existing Kaizen report format for **Import report** in Expo.
 
 ```json
 [

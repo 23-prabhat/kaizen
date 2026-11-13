@@ -2,12 +2,13 @@ package com.daytabs.planner
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
-import org.json.JSONException
 import org.json.JSONObject
 
 internal const val MAX_REPORT_BYTES = 1_000_000
@@ -18,6 +19,7 @@ internal val lastCalendarDay: LocalDate = LocalDate.of(9999, 12, 31)
 
 internal data class Schedule(val start: LocalDate, val finish: LocalDate)
 internal data class ProgressNote(val day: LocalDate, val text: String)
+internal enum class GoalTag(val label: String) { SHORT_TERM("Short term"), LONG_TERM("Long term") }
 internal data class Entry(
     val id: String = UUID.randomUUID().toString(),
     val title: String,
@@ -27,6 +29,7 @@ internal data class Entry(
     val deadline: Long? = null,
     val deadlineStart: Long? = null,
     val progress: List<ProgressNote> = emptyList(),
+    val goalTag: GoalTag? = null,
 ) {
     val completed: Boolean get() = completedAt != null
 }
@@ -103,36 +106,7 @@ internal class PlannerStore(private val context: Context) {
         state.copy(records = state.records + (key to change(state.records[key].orEmpty())))
     }
 
-    fun importReport(input: String): Int {
-        require(input.length <= MAX_REPORT_BYTES) { "Choose a report file under 1 MB." }
-        val source = try {
-            JSONArray(input)
-        } catch (_: JSONException) {
-            throw IllegalArgumentException("Choose a valid Kaizen report file.")
-        }
-        require(source.length() > 0) { "No to-dos found in this file." }
-        val reports = List(source.length()) { index ->
-            val row = source.optJSONObject(index)
-                ?: throw IllegalArgumentException("To-do ${index + 1} is invalid.")
-            val id = row.opt("id") as? String
-            val day = parseDay(row.opt("day") as? String)
-            val title = row.opt("title") as? String
-            val note = row.opt("note")
-            val done = row.opt("done") as? Boolean
-            require(id != null && reportId.matches(id) && day != null && title != null &&
-                title.isNotBlank() && title.length <= 160 &&
-                (note === JSONObject.NULL || note is String && note.length <= 4000) && done != null) {
-                "To-do ${index + 1} is invalid."
-            }
-            todoKey(day) to Entry(
-                id = "work:$id",
-                title = title.trim(),
-                note = note as? String,
-                completedAt = if (done) "${day}T12:00:00.000Z" else null,
-            )
-        }
-        return addImportedTodos(reports)
-    }
+    fun importReport(input: String): Int = addImportedTodos(parseTodoReport(input, Instant.now(), ZoneId.systemDefault()))
 
     fun addImportedTodos(todos: List<Pair<String, Entry>>): Int {
         var added = 0
@@ -185,7 +159,6 @@ internal class PlannerStore(private val context: Context) {
 
     private companion object {
         val legacyKeys = arrayOf(RECORDS, APPEARANCE, AVATAR, REMINDERS, OPENING)
-        val reportId = Regex("[A-Za-z0-9_-]{1,120}")
     }
 }
 
@@ -212,6 +185,7 @@ private fun decodeRecords(value: String): Map<String, List<Entry>> {
                 deadline = row.optLong("deadline", 0).takeIf { it > 0 },
                 deadlineStart = row.optLong("deadlineStart", 0).takeIf { it > 0 },
                 progress = decodeProgress(row.optJSONArray("progress")),
+                goalTag = GoalTag.entries.firstOrNull { it.name == row.stringOrNull("goalTag") },
             )
         }
     }.toMutableMap()
@@ -236,6 +210,7 @@ private fun encodeRecords(records: Map<String, List<Entry>>): String = JSONObjec
                     .put("completedAt", entry.completedAt ?: JSONObject.NULL).apply {
                         entry.deadline?.let { put("deadline", it) }
                         entry.deadlineStart?.let { put("deadlineStart", it) }
+                        entry.goalTag?.let { put("goalTag", it.name) }
                         if (entry.progress.isNotEmpty()) {
                             put("progress", JSONArray().apply {
                                 entry.progress.forEach { note ->

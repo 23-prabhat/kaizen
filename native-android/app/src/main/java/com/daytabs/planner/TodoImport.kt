@@ -5,18 +5,19 @@ import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.time.Instant
 import java.time.LocalDate
-import java.time.LocalTime
 import java.time.ZoneId
 import java.util.Locale
 import java.util.zip.ZipInputStream
-import kotlin.math.roundToInt
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 
 internal const val MAX_TODO_FILE_BYTES = 2_000_000
 private const val MAX_WORKBOOK_BYTES = 16_000_000
 private const val MAX_ROWS = 5_000
 private val columns = listOf("date", "todo work", "deadline")
-private val clockPattern = Regex("""(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?\s*([AaPp][Mm])?""")
+private val reportId = Regex("[A-Za-z0-9_-]{1,120}")
 
 private data class ImportRow(val number: Int, val cells: List<String>)
 private data class TodoSheet(val rows: List<ImportRow>, val date1904: Boolean? = null)
@@ -48,38 +49,60 @@ internal fun parseTodoFile(bytes: ByteArray, now: Instant, zone: ZoneId): List<P
         require(day != null) { "Row ${row.number} needs a valid date in YYYY-MM-DD format." }
         require(title.isNotBlank() && title.length <= 160) { "Row ${row.number} needs a task title of 1 to 160 characters." }
         require(row.cells.drop(3).none { it.isNotBlank() }) { "Row ${row.number} has extra columns." }
-        val time = if (timeText.isBlank()) null else {
-            parseClock(timeText, sheet.date1904 != null)
-                ?: throw IllegalArgumentException("Row ${row.number} needs a time like 17:30, 5:30 PM, or an empty deadline.")
-        }
-        val deadline = time?.let { day.atTime(it).atZone(zone).toInstant().toEpochMilli() }
-        val start = deadline?.let {
-            val dayStart = day.atStartOfDay(zone).toInstant().toEpochMilli()
-            minOf(it, maxOf(dayStart, now.toEpochMilli()))
-        }
-        val signature = "$day\u0000$title\u0000${time?.toString().orEmpty()}"
-        val id = digest.digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
-        todoKey(day) to Entry(id = "bulk:$id", title = title, deadline = deadline, deadlineStart = start)
+        val deadline = importDeadline("Row ${row.number}", timeText, day, now, zone, sheet.date1904 != null)
+        todoKey(day) to Entry(id = bulkId(digest, day, title, deadline), title = title,
+            deadline = deadline.deadline, deadlineStart = deadline.start)
     }
 }
 
-private fun parseClock(text: String, excel: Boolean): LocalTime? {
-    if (excel) {
-        text.toDoubleOrNull()?.takeIf { it >= 0 && it < 1 }?.let {
-            return LocalTime.ofSecondOfDay((it * 86_400).roundToInt().coerceAtMost(86_399).toLong())
-        }
+internal fun parseTodoReport(input: String, now: Instant, zone: ZoneId): List<Pair<String, Entry>> {
+    require(input.length <= MAX_REPORT_BYTES) { "Choose a JSON file under 1 MB." }
+    val source = try {
+        JSONArray(input.removePrefix("\uFEFF"))
+    } catch (_: JSONException) {
+        throw IllegalArgumentException("Use a JSON array of to-dos.")
     }
-    val match = clockPattern.matchEntire(text) ?: return null
-    val (hours, minutes, seconds, meridiem) = match.destructured
-    var hour = hours.toInt()
-    val minute = minutes.toIntOrNull() ?: 0
-    val second = seconds.toIntOrNull() ?: 0
-    if (meridiem.isNotEmpty()) {
-        if (hour !in 1..12) return null
-        hour = hour % 12 + if (meridiem.equals("PM", true)) 12 else 0
-    } else if (minutes.isEmpty()) return null
-    if (hour !in 0..23 || minute !in 0..59 || second !in 0..59) return null
-    return LocalTime.of(hour, minute, second)
+    require(source.length() > 0) { "No to-dos found in this file." }
+    require(source.length() <= MAX_ROWS) { "Import up to 5,000 to-dos per file." }
+    val digest = MessageDigest.getInstance("SHA-256")
+    return List(source.length()) { index ->
+        val label = "To-do ${index + 1}"
+        val row = source.optJSONObject(index) ?: throw IllegalArgumentException("$label must be a JSON object.")
+        val day = parseDay((row.opt("day") ?: row.opt("date")) as? String)
+        val title = ((row.opt("title") ?: row.opt("todo work")) as? String)?.trim()
+        require(day != null) { "$label needs a valid date in YYYY-MM-DD format." }
+        require(!title.isNullOrEmpty() && title.length <= 160) { "$label needs a task title of 1 to 160 characters." }
+        val id = row.optionalString("id", label)
+        val note = row.optionalString("note", label)
+        val done = row.opt("done")
+        require(id == null || reportId.matches(id)) { "$label has an invalid ID." }
+        require(note == null || note.length <= 4000) { "$label needs a note of up to 4,000 characters." }
+        require(done == null || done is Boolean) { "$label needs true or false for done." }
+        val deadline = importDeadline(label, row.optionalString("deadline", label).orEmpty(), day, now, zone)
+        todoKey(day) to Entry(
+            id = if (id == null) bulkId(digest, day, title, deadline) else "work:$id",
+            title = title, note = note, completedAt = if (done == true) "${day}T12:00:00.000Z" else null,
+            deadline = deadline.deadline, deadlineStart = deadline.start,
+        )
+    }
+}
+
+private fun JSONObject.optionalString(key: String, label: String): String? {
+    if (isNull(key)) return null
+    return opt(key) as? String ?: throw IllegalArgumentException("$label needs text for $key.")
+}
+
+private fun importDeadline(label: String, text: String, day: LocalDate, now: Instant, zone: ZoneId, excel: Boolean = false) =
+    try {
+        parseImportedDeadline(text, day, now, zone, excel)
+    } catch (failure: IllegalArgumentException) {
+        throw IllegalArgumentException("$label: ${failure.message}")
+    }
+
+private fun bulkId(digest: MessageDigest, day: LocalDate, title: String, deadline: ImportedDeadline): String {
+    val signature = "$day\u0000$title\u0000${deadline.identity}"
+    val id = digest.digest(signature.toByteArray()).joinToString("") { "%02x".format(it) }
+    return "bulk:$id"
 }
 
 private fun excelDate(text: String, date1904: Boolean): LocalDate? {

@@ -213,15 +213,16 @@ internal fun Field(
     multiline: Boolean = false,
     numeric: Boolean = false,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val palette = colors
     val shape = RoundedCornerShape(7.dp)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Copy(label, weight = FontWeight.Bold)
         BasicTextField(
             value = value,
             onValueChange = { input ->
-                if (input.length <= limit && (!numeric || input.all { it in '0'..'9' })) onChange(input)
+                if (input.length <= limit && (!numeric || input.all { it.isDigit() })) onChange(input)
             },
             modifier = Modifier.fillMaxWidth().heightIn(min = if (multiline) 132.dp else 48.dp)
                 .clip(shape).background(palette.surface).border(2.dp, palette.ink, shape)

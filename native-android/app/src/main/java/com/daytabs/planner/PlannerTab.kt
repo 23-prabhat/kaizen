@@ -239,7 +239,9 @@ private fun EntryRow(
     val top = if (first) 7.dp else 0.dp
     val bottom = if (last) 7.dp else 0.dp
     val shape = RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
-    val subtitle = entry.schedule?.let { "${it.phase(today).label} · ${it.label()}" }
+    val subtitle = entry.schedule?.let {
+        listOfNotNull(entry.goalTag?.label, it.phase(today).label, it.label()).joinToString(" · ")
+    }
     val innerTop = if (first) 5.5.dp else 0.dp
     val innerBottom = if (last) 5.5.dp else 0.dp
     val innerShape = RoundedCornerShape(
