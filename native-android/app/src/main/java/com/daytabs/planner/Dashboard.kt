@@ -63,6 +63,7 @@ internal fun ColumnScope.Dashboard(
     onNavigate: (Tab) -> Unit,
     onNotifications: () -> Unit,
     onWidget: () -> Unit,
+    onOpenGoal: (String) -> Unit,
 ) {
     val palette = colors
     val todaysEntries = state.todos(today)
@@ -118,7 +119,13 @@ internal fun ColumnScope.Dashboard(
                             size = 14, color = actionInk, weight = FontWeight.Bold)
                         active.take(3).forEach { goal ->
                             Rule()
-                            Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                                    .clickable(role = Role.Button, onClickLabel = "View progress notes") { onOpenGoal(goal.id) }
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
                                 Glyph(if (goal.completed) "check-circle" else "flag", 18)
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                     Copy(goal.title, size = 14, weight = FontWeight.Bold)
@@ -126,6 +133,7 @@ internal fun ColumnScope.Dashboard(
                                     Copy(listOfNotNull(goal.goalTag?.label, dates).joinToString(" · "),
                                         size = 13, lineHeight = 17, color = palette.secondary)
                                 }
+                                Glyph("chevron-right", 18, palette.secondary)
                             }
                         }
                     }

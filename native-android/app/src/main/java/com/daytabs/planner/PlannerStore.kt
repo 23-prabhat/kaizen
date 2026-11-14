@@ -106,6 +106,14 @@ internal class PlannerStore(private val context: Context) {
         state.copy(records = state.records + (key to change(state.records[key].orEmpty())))
     }
 
+    fun saveGoalProgressNote(goalId: String, note: ProgressNote) = updateEntries(GOALS_KEY) { goals ->
+        check(goals.any { it.id == goalId }) { "This goal was deleted." }
+        goals.map { goal ->
+            if (goal.id == goalId) goal.copy(progress = goal.progress.filterNot { it.day == note.day } + note)
+            else goal
+        }
+    }
+
     fun importReport(input: String): Int = addImportedTodos(parseTodoReport(input, Instant.now(), ZoneId.systemDefault()))
 
     fun addImportedTodos(todos: List<Pair<String, Entry>>): Int {

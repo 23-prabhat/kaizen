@@ -170,6 +170,7 @@ private fun Kaizen(
     onReminderOpened: () -> Unit,
 ) {
     var tab by rememberSaveable { mutableStateOf(Tab.DASHBOARD) }
+    var goalProgressId by rememberSaveable { mutableStateOf<String?>(null) }
     var editor by remember { mutableStateOf<EditRequest?>(null) }
     var notifications by rememberSaveable { mutableStateOf(false) }
     var widget by rememberSaveable { mutableStateOf(false) }
@@ -183,6 +184,7 @@ private fun Kaizen(
         if (reminderTab != null && editor == null) {
             notifications = false
             widget = false
+            goalProgressId = null
             tab = reminderTab
             if (tab == Tab.TODOS) todoDayReset++
             onReminderOpened()
@@ -200,13 +202,21 @@ private fun Kaizen(
     }
 
     val edit = editor
-    BackHandler(edit == null && tab != Tab.DASHBOARD && !notifications && !widget) { tab = Tab.DASHBOARD }
+    val goal = state.goals.firstOrNull { it.id == goalProgressId }
+    BackHandler(edit == null && (goal != null || tab != Tab.DASHBOARD) && !notifications && !widget) {
+        if (goal != null) goalProgressId = null else tab = Tab.DASHBOARD
+    }
     if (edit != null) {
         androidx.compose.runtime.key(edit) {
             EntryEditor(edit, store, onClose = { editor = null }, onStartGoal = { title ->
                 tab = Tab.GOALS
                 editor = EditRequest(GOALS_KEY, edit.day.coerceAtLeast(today), draftTitle = title)
             })
+        }
+    } else if (goal != null) {
+        androidx.compose.runtime.key(goal.id) {
+            GoalProgressScreen(goal, today, store, onBack = { goalProgressId = null },
+                onEditGoal = { editor = EditRequest(GOALS_KEY, today, goal) })
         }
     } else {
         Column(Modifier.fillMaxSize().background(colors.background)
@@ -219,8 +229,9 @@ private fun Kaizen(
                             if (destination == Tab.SETTINGS) settingsReset++
                             if (destination == Tab.TODOS) todoDayReset++
                             tab = destination
-                        }, { notifications = true }, { widget = true })
-                        Tab.TODOS, Tab.GOALS, Tab.HISTORY -> PlannerTab(tab, state, today, store, todoDayReset) { editor = it }
+                        }, { notifications = true }, { widget = true }, onOpenGoal = { goalProgressId = it })
+                        Tab.TODOS, Tab.GOALS, Tab.HISTORY -> PlannerTab(tab, state, today, store, todoDayReset,
+                            onEdit = { editor = it }, onOpenGoal = { goalProgressId = it })
                         Tab.SETTINGS -> Settings(state, store, settingsReset, foreground, reminderError)
                     }
                 }

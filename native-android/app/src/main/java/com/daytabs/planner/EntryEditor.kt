@@ -67,10 +67,6 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
     val noun = if (isGoal) "goal" else "to-do"
     var title by rememberSaveable { mutableStateOf(entry?.title ?: request.draftTitle) }
     var note by rememberSaveable { mutableStateOf(entry?.note.orEmpty()) }
-    val progressDay = remember { LocalDate.now() }
-    val progressNote = entry?.progress?.firstOrNull { it.day == progressDay }
-    var progressOpen by rememberSaveable { mutableStateOf(false) }
-    var progressText by rememberSaveable { mutableStateOf(progressNote?.text.orEmpty()) }
     var deadline by rememberSaveable { mutableStateOf(entry?.deadline) }
     var hours by rememberSaveable { mutableStateOf("") }
     var minutes by rememberSaveable { mutableStateOf("") }
@@ -139,7 +135,6 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
         val cleanTitle = title.trim()
         val cleanNote = if (isGoal) entry?.note else note.trim().ifEmpty { null }
         val schedule = if (isGoal && !deleting) Schedule(start, requireNotNull(finish)) else null
-        val progressEdit = if (isGoal && progressOpen) progressText.trim() else null
         val deadlineStart = when {
             dueAt == null -> null
             !hasDuration && dueAt == entry?.deadline -> entry.deadlineStart
@@ -158,18 +153,10 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                         if (deleting) {
                             entries.filterNot { it.id == entry?.id }
                         } else {
-                            fun edit(current: Entry): Entry {
-                                val progress = if (progressEdit == null) current.progress else {
-                                    current.progress.filterNot { it.day == progressDay } +
-                                        listOfNotNull(progressEdit.takeIf { it.isNotEmpty() }?.let {
-                                            ProgressNote(progressDay, it)
-                                        })
-                                }
-                                return current.copy(
-                                    title = cleanTitle, note = cleanNote, schedule = schedule,
-                                    deadline = dueAt, deadlineStart = deadlineStart, progress = progress, goalTag = goalTag,
-                                )
-                            }
+                            fun edit(current: Entry) = current.copy(
+                                title = cleanTitle, note = cleanNote, schedule = schedule,
+                                deadline = dueAt, deadlineStart = deadlineStart, goalTag = goalTag,
+                            )
                             if (entry == null) {
                                 entries + edit(Entry(title = cleanTitle))
                             } else {
@@ -225,8 +212,6 @@ internal fun EntryEditor(request: EditRequest, store: PlannerStore, onClose: () 
                         Field("Title", title, { title = it }, 160, enabled = !busy)
                         if (isGoal) {
                             GoalTagPicker(goalTag, !busy) { goalTag = it }
-                            GoalProgress(entry?.progress.orEmpty(), progressDay, progressOpen, progressText,
-                                { progressOpen = true }, { progressText = it }, !busy)
                             Panel(Modifier.fillMaxWidth()) {
                                 Row(Modifier.fillMaxWidth().selectableGroup()) {
                                     Timing.entries.forEach { option ->
@@ -386,56 +371,6 @@ internal fun CalendarGrid(
                             .semantics { contentDescription = accessibleDayLabel(day) },
                             contentAlignment = Alignment.Center) {
                             Copy(index.toString())
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun GoalProgress(
-    notes: List<ProgressNote>,
-    today: LocalDate,
-    editing: Boolean,
-    text: String,
-    onEdit: () -> Unit,
-    onChange: (String) -> Unit,
-    enabled: Boolean,
-) {
-    val current = notes.firstOrNull { it.day == today }
-    val previous = remember(notes, today) { notes.filterNot { it.day == today }.sortedByDescending { it.day } }
-    var showPrevious by rememberSaveable { mutableStateOf(false) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Copy("Daily progress notes", size = 18, weight = FontWeight.Bold)
-        if (editing) {
-            Copy(dayLabel(today), size = 14, color = colors.secondary)
-            Field("Today’s progress note", text, onChange, 4000, multiline = true, enabled = enabled)
-        } else {
-            current?.let {
-                Copy(it.text, color = colors.secondary, maxLines = 3)
-            }
-            Action(
-                if (current == null) "Add today’s progress note" else "Edit today’s progress note",
-                icon = if (current == null) "plus" else "edit-2",
-                enabled = enabled,
-                onClick = onEdit,
-            )
-        }
-        if (previous.isNotEmpty()) {
-            Action(if (showPrevious) "Hide past notes" else "Show past notes (${previous.size})") {
-                showPrevious = !showPrevious
-            }
-            if (showPrevious) {
-                Panel(Modifier.fillMaxWidth()) {
-                    Column {
-                        previous.forEachIndexed { index, note ->
-                            if (index > 0) Rule()
-                            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Copy(fullDayLabel(note.day), size = 14, weight = FontWeight.Bold)
-                                Copy(note.text)
-                            }
                         }
                     }
                 }

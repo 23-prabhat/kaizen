@@ -52,6 +52,7 @@ internal fun ColumnScope.PlannerTab(
     store: PlannerStore,
     todoDayReset: Int,
     onEdit: (EditRequest) -> Unit,
+    onOpenGoal: (String) -> Unit,
 ) {
     val history = tab == Tab.HISTORY
     val goals = tab == Tab.GOALS
@@ -137,8 +138,10 @@ internal fun ColumnScope.PlannerTab(
             }
         }
         itemsIndexed(ordered, key = { _, item -> item.id }) { index, entry ->
-            EntryRow(entry, today, index == 0, index == ordered.lastIndex, history,
-                onOpen = { onEdit(EditRequest(key, day, entry, history)) },
+            EntryRow(entry, today, index == 0, index == ordered.lastIndex, history, goals,
+                onOpen = {
+                    if (goals) onOpenGoal(entry.id) else onEdit(EditRequest(key, day, entry, history))
+                },
                 onToggle = {
                     scope.launch {
                         error = ""
@@ -232,6 +235,7 @@ private fun EntryRow(
     first: Boolean,
     last: Boolean,
     readOnly: Boolean,
+    isGoal: Boolean,
     onToggle: () -> Unit,
     onOpen: () -> Unit,
 ) {
@@ -259,24 +263,31 @@ private fun EntryRow(
                     if (entry.completed) Glyph("check", 15, palette.surface)
                 }
             }
-            val description = if (readOnly) "${entry.title}, ${if (entry.completed) "completed" else "unfinished"}" else "Edit ${entry.title}"
-            Column(Modifier.weight(1f).heightIn(min = 51.dp)
+            val description = when {
+                isGoal -> "View progress notes for ${entry.title}"
+                readOnly -> "${entry.title}, ${if (entry.completed) "completed" else "unfinished"}"
+                else -> "Edit ${entry.title}"
+            }
+            Row(Modifier.weight(1f).heightIn(min = 51.dp)
                 .clickable(role = Role.Button, onClick = onOpen).semantics { contentDescription = description }
                 .padding(top = 14.dp, bottom = 14.dp, end = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
-                Copy(entry.title, lineHeight = 20, weight = FontWeight.Bold,
-                    color = if (entry.completed) palette.secondary else palette.ink)
-                (subtitle ?: entry.note)?.let {
-                    Copy(it, size = 14, lineHeight = 18, color = palette.secondary,
-                        maxLines = if (subtitle == null) 1 else Int.MAX_VALUE)
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically)) {
+                    Copy(entry.title, lineHeight = 20, weight = FontWeight.Bold,
+                        color = if (entry.completed) palette.secondary else palette.ink)
+                    (subtitle ?: entry.note)?.let {
+                        Copy(it, size = 14, lineHeight = 18, color = palette.secondary,
+                            maxLines = if (subtitle == null) 1 else Int.MAX_VALUE)
+                    }
+                    entry.deadline?.let {
+                        Copy("Due ${deadlineLabel(androidx.compose.ui.platform.LocalContext.current, it)}",
+                            size = 14, lineHeight = 18, color = palette.secondary)
+                    }
+                    if (entry.schedule != null && entry.progress.any { it.day == today }) {
+                        Copy("Progress noted today", size = 14, lineHeight = 18, color = palette.secondary)
+                    }
                 }
-                entry.deadline?.let {
-                    Copy("Due ${deadlineLabel(androidx.compose.ui.platform.LocalContext.current, it)}",
-                        size = 14, lineHeight = 18, color = palette.secondary)
-                }
-                if (entry.schedule != null && entry.progress.any { it.day == today }) {
-                    Copy("Progress noted today", size = 14, lineHeight = 18, color = palette.secondary)
-                }
+                if (isGoal) Glyph("chevron-right", 18, palette.secondary)
             }
         }
         if (!last) Rule(Modifier.padding(horizontal = 1.5.dp))
